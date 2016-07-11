@@ -7,25 +7,23 @@ from datetime import datetime
 from wordcloud import WordCloud
 import calendar
 import os, os.path #parseAllThreads
-
+import nltk
 """
 with open('messages.htm', "r") as f:
 	chat = fb_parser.html_to_py(f)
 	# Dump to json to prove works:
 	fb_parser.py_to_json(chat)
 """
-"""
-import sqlite3
-conn = sqlite3.connect('chat.db')
-c = conn.cursor()
-print(c.tables)
-"""
-import nltk
+#=====================================================================================================
+#                                  Parsing Messages and Contact Info
+#=====================================================================================================
+personDict = {} #name -> dateTime -> tuple of messages
+fullTextDict = {} #dateTime -> tuple of everyone's messages
+vCardDict = {} #phone number/email -> name
 
-
-personDict = {}
-fullTextDict = {}
-vCardDict = {}
+"""
+For parsing all Facebook messages into dictionaries
+"""
 def parseFBMessages():
 	#jsonFile = json.loads(open('parser/FB-Message-Parser/messages.json').read())
 	jsonFile = json.loads(open('messages.json').read())
@@ -51,15 +49,28 @@ def parseFBMessages():
 	for sender in personDict.keys():
 		personDict[sender] = OrderedDict(sorted(personDict[sender].items(), key=lambda t: t[0]))
 	fullTextDict = OrderedDict(sorted(fullTextDict.items(), key=lambda t: t[0]))
+
+"""
+Parsing .xml file containing all sms ("Super Backup" Version)
+"""
+def parseSMS():
+	return
+
+"""
+For parsing all imessage threads into dictionaries
+"""
 def parseAllThreads(me, folder):
 	def parseThread(me, fileName):
 		global personDict, fullTextDict
 		if vCardDict == {}:
 			parseVCF()
-			print(vCardDict)
+			print(len(vCardDict))
 		jsonFile = json.loads(open(fileName).read())
 		number = jsonFile['messages'][0]['handle_id']
-		person = vCardDict[number]
+		if number in vCardDict.keys():
+			person = vCardDict[number]
+		else:
+			return 1
 		for message in jsonFile['messages']:
 			fromMe = message['is_from_me']
 			date = message['date']
@@ -80,16 +91,22 @@ def parseAllThreads(me, folder):
 				fullTextDict[dateFormatted] = tuple(currLst)
 			else:
 				fullTextDict[dateFormatted] = tuple([text])
+		return 0
+	notSaved = 0
 	for root, _, files in os.walk(folder):
 	    for f in files:
 	        fullpath = os.path.join(root, f)
-	        parseThread(me, fullpath)
+	        notSaved += parseThread(me, fullpath)
+	print(notSaved)
 
 
-
+"""
+Parses file of all vcard data into dictionary mapping phone number/email to name.
+All vcards must be in same file.
+"""
 def parseVCF():
 	global vCardDict
-	vcfFile = open('all.vcf', 'r')#need to fix later
+	vcfFile = open('allme.vcf', 'r')#need to fix later
 	dictionary = {}
 	for line in vcfFile:
 		if line.startswith('FN'):
@@ -101,25 +118,22 @@ def parseVCF():
 				index = number.find(":")
 				number = number[index + 1:]
 			number = number.rstrip()
-			"""
-			if currName not in dictionary.keys():
-				dictionary[currName] = tuple([number])
-			else:
-				currLst = list(dictionary[currName])
-				currLst.append(number)
-				dictionary[currName] = tuple(currLst)
-			"""
 			dictionary[number] = currName
 	vCardDict = dictionary
+#=====================================================================================================
+#                                       Combining Contacts
+#=====================================================================================================
+
+def minEditDistance(w1, w2):
+	table = []
+	for _ in range(len(w1)):
+		table.append([])
 
 
 
-def getAllMessagesAsString(personStr):
-	string = ""
-	for messages in personDict[personStr].values():
-		for message in messages:
-			string += message + " "
-	return string
+#=====================================================================================================
+#                                        Analytics/Fun
+#=====================================================================================================
 
 def wordCloud(personStr):
 	text = getAllMessagesAsString(personStr)
@@ -178,16 +192,6 @@ def topFriendsMonth(me, number, month, year) :
 			return topFriends
 			break
 
-def numMessagesMonth(person, monthStart, monthEnd):
-	# monthStart = datetime(int(year), int(month), 1)
-	# monthEnd = datetime(int(year), int(month), calendar.monthrange(int(year),int(month))[1])
-	count = 0
-	for datetime in personDict[person]:
-		if datetime >= monthStart and datetime <= monthEnd:
-			count += 1
-	return count
-
-
 
 def plotTopFriendsOverTime(me, number):
 	import matplotlib.pyplot as plt
@@ -213,7 +217,23 @@ def plotTopFriendsOverTime(me, number):
 	plt.legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.)
 	plt.show()
 
-
+#=====================================================================================================
+#                                           Helpers/Utilities
+#=====================================================================================================
+def getAllMessagesAsString(personStr):
+	string = ""
+	for messages in personDict[personStr].values():
+		for message in messages:
+			string += message + " "
+	return string
+def numMessagesMonth(person, monthStart, monthEnd):
+	# monthStart = datetime(int(year), int(month), 1)
+	# monthEnd = datetime(int(year), int(month), calendar.monthrange(int(year),int(month))[1])
+	count = 0
+	for datetime in personDict[person]:
+		if datetime >= monthStart and datetime <= monthEnd:
+			count += 1
+	return count
 def fullWordList():
 	fullWordList = []
 	if fullTextDict == {}:
@@ -229,17 +249,5 @@ def fullWordList():
 				fullWordList.append(word)
 	return fullWordList
 
-def minEditDistance(w1, w2):
-	table = []
-	for _ in range(len(w1)):
-		table.append([])
-
-
-"""
-def randomInStyleOf(name):
-	allMessages = getAllMessagesAsString(name)
-
-#def parseSentenceAroundWord(message, word):
-"""
 
 
