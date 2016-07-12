@@ -8,6 +8,7 @@ from wordcloud import WordCloud
 import calendar
 import os, os.path #parseAllThreads
 import nltk
+import xml.etree.ElementTree as ET #parseSMS
 """
 with open('messages.htm', "r") as f:
 	chat = fb_parser.html_to_py(f)
@@ -20,6 +21,7 @@ with open('messages.htm', "r") as f:
 personDict = {} #name -> dateTime -> tuple of messages
 fullTextDict = {} #dateTime -> tuple of everyone's messages
 vCardDict = {} #phone number/email -> name
+aliasDict = {} #alias1 -> alias2, alias2 -> alias1
 
 """
 For parsing all Facebook messages into dictionaries
@@ -51,9 +53,18 @@ def parseFBMessages():
 	fullTextDict = OrderedDict(sorted(fullTextDict.items(), key=lambda t: t[0]))
 
 """
-Parsing .xml file containing all sms ("Super Backup" Version)
+Parsing .xml file containing all sms ("Super Backup" for Android)
 """
-def parseSMS():
+def parseSMS(me):
+	def parseSuperBackup():
+		tree = ET.parse('allsms.xml') #fix this later
+		root = tree.getroot()
+		for message in root:
+			date = message.attrib['time']
+			text = message.attrib['body']
+			sender = message.attrib['name'] if message.attrib['name'] else me
+			
+	parseSuperBackup()
 	return
 
 """
@@ -123,17 +134,42 @@ def parseVCF():
 #=====================================================================================================
 #                                       Combining Contacts
 #=====================================================================================================
+"""
+add to alias dictionary a mapping from each name in otherNames to a name that's in existing names,
+or adds a new name if no good match is found.
+Step 1: compile list of possible matches by using minEditDistance
+Step 2: If there are a few possible matches, match using elements of writing style
+"""
+def matchAliases(existingNames, otherNames):
+	for name in otherNames:
+		candidates = possMatches(name, existingNames) #list of possible matches (determined by small edit distance)
+
+#def possMatches(name, existingNames, number=5):
+
+
+
 
 def minEditDistance(w1, w2):
-	table = []
-	for _ in range(len(w1)):
-		table.append([])
+	def diff(a, b):
+		if a == b:
+			return 0
+		return 1
+
+	table = [[0 for _ in range(len(w2))] for _ in range(len(w1))]
+	for i in range(0, len(w1)):
+		table[i][0] = i
+	for j in range(1, len(w2)):
+		table[0][j] = j
+	for i in range(1, len(w1)):
+		for j in range(1, len(w2)):
+			table[i][j] = min(table[i-1][j] + 1, table[i][j-1] + 1, table[i-1][j-1] + diff(w1[i], w2[j]))
+	return table[len(w1) - 1][len(w2) - 1]
 
 
 
 #=====================================================================================================
 #                                        Analytics/Fun
-#=====================================================================================================
+#=================================================== ==================================================
 
 def wordCloud(personStr):
 	text = getAllMessagesAsString(personStr)
