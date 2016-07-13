@@ -59,11 +59,48 @@ def parseSMS(me):
 	def parseSuperBackup():
 		tree = ET.parse('allsms.xml') #fix this later
 		root = tree.getroot()
+		newNames = []
+		notFound = []
+		for message in root:
+			#sender = message.attrib['name'] if message.attrib['name'] else me
+			phoneNumber = formatPhoneNumber(message.attrib['address'])
+			if message.attrib['name']:
+				sender = message.attrib['name'] 
+			elif phoneNumber in vCardDict.keys():
+				sender = vCardDict[phoneNumber]
+				if sender not in newNames:
+					newNames.append(sender)
+			else:
+				sender = phoneNumber
+				if sender not in notFound:
+					notFound.append(sender)
+		#print(newNames)
+		#print(vCardDict.keys())
+		#print(notFound)
+		matchAliases(personDict.keys(), newNames)
 		for message in root:
 			date = message.attrib['time']
 			text = message.attrib['body']
 			sender = message.attrib['name'] if message.attrib['name'] else me
-			
+			if sender not in personDict.keys():
+				if sender in aliasDict.keys():
+					sender = aliasDict[sender]
+				else:
+					personDict[sender] = {}
+			dateFormatted = datetime.strptime(date, '%b %d, %Y %I:%M:%S %p') #"Jul 10, 2016 8:28:10 PM"
+			if dateFormatted in personDict[sender].keys():
+				currLst = list(personDict[sender][dateFormatted])
+				currLst.append(text)
+				personDict[sender][dateFormatted] = tuple(currLst)
+			else:
+				personDict[sender][dateFormatted] = tuple([text])
+			if dateFormatted in fullTextDict.keys():
+				currLst = list(fullTextDict[dateFormatted])
+				currLst.append(text)
+				fullTextDict[dateFormatted] = tuple(currLst)
+			else:
+				fullTextDict[dateFormatted] = tuple([text])
+	parseVCF()
 	parseSuperBackup()
 	return
 
@@ -75,7 +112,6 @@ def parseAllThreads(me, folder):
 		global personDict, fullTextDict
 		if vCardDict == {}:
 			parseVCF()
-			print(len(vCardDict))
 		jsonFile = json.loads(open(fileName).read())
 		number = jsonFile['messages'][0]['handle_id']
 		if number in vCardDict.keys():
@@ -108,7 +144,7 @@ def parseAllThreads(me, folder):
 	    for f in files:
 	        fullpath = os.path.join(root, f)
 	        notSaved += parseThread(me, fullpath)
-	print(notSaved)
+	#print(notSaved)
 
 
 """
@@ -117,20 +153,40 @@ All vcards must be in same file.
 """
 def parseVCF():
 	global vCardDict
+	def parseVCF3():
+		for line in vcfFile:
+			if line.startswith('FN'):
+				currName = line[3:len(line)-1]
+			elif line.startswith('TEL;') or line.startswith('EMAIL'):
+				index = line.find('pref:')
+				number = line[index + 5:]
+				if index == -1:
+					index = number.find(":")
+					number = number[index + 1:]
+				number = number.rstrip()
+				number = formatPhoneNumber(number) #trying this out
+				vCardDict[number] = currName
+	def parseVCF2():
+		for line in vcfFile:
+			if line.startswith('FN'):
+				currName = line[3:len(line)-1]
+			elif line.startswith('TEL;') or line.startswith('EMAIL'):
+				index = line.find(':')
+				number = line[index+1:]
+				number = number.rstrip()
+				number = formatPhoneNumber(number) #trying this out
+				vCardDict[number] = currName
 	vcfFile = open('allme.vcf', 'r')#need to fix later
-	dictionary = {}
-	for line in vcfFile:
-		if line.startswith('FN'):
-			currName = line[3:len(line)-1]
-		elif line.startswith('TEL;') or line.startswith('EMAIL'):
-			index = line.find('pref:')
-			number = line[index + 5:]
-			if index == -1:
-				index = number.find(":")
-				number = number[index + 1:]
-			number = number.rstrip()
-			dictionary[number] = currName
-	vCardDict = dictionary
+	i = 0
+	for line in vcfFile: #hacky, consider changing
+		i += 1
+		if line.startswith('VERSION'):
+			if '3.' in line:
+				parseVCF3()
+			else:
+				parseVCF2()
+
+
 #=====================================================================================================
 #                                       Combining Contacts
 #=====================================================================================================
@@ -138,15 +194,22 @@ def parseVCF():
 add to alias dictionary a mapping from each name in otherNames to a name that's in existing names,
 or adds a new name if no good match is found.
 Step 1: compile list of possible matches by using minEditDistance
-Step 2: If there are a few possible matches, match using elements of writing style
+Step 2: Somone is less likely to be a match if the existing name already corresponds to many other names
+Step 3: If there are a few possible matches, match using elements of writing style
 """
 def matchAliases(existingNames, otherNames):
 	for name in otherNames:
 		candidates = possMatches(name, existingNames) #list of possible matches (determined by small edit distance)
+		topCandidate = candidates[0]
+		aliasDict[name] = topCandidate
+		print(name, topCandidate)
 
-#def possMatches(name, existingNames, number=5):
-
-
+def possMatches(name, existingNames, number=5):
+	editDistances = {} #existing name -> min edit distance
+	for existingName in existingNames:
+		score = minEditDistance(name, existingName)
+		editDistances[existingName] = score
+	return sorted(editDistances.keys(), key = lambda x: editDistances[x])[:5] #?
 
 
 def minEditDistance(w1, w2):
@@ -201,7 +264,6 @@ def topFriends(me, number):
 	for person in temp:
 		if i < number:
 			if person != me:
-				#print(person)
 				topFriends.append(person)
 				i += 1
 		else:
@@ -222,7 +284,6 @@ def topFriendsMonth(me, number, month, year) :
 		if i < number:
 			if person != me:
 				topFriends.append(person)
-				#print(person)
 				i += 1
 		else:
 			return topFriends
@@ -248,10 +309,11 @@ def plotTopFriendsOverTime(me, number):
 				for friend in topFriendsList:
 					messageCount[friend].append(numMessagesMonth(friend, monthStart, monthEnd))
 	for friend, countList in messageCount.items():
-		#print(countList)
 		plt.plot(countList, label = friend)
 	plt.legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.)
 	plt.show()
+
+#make messages searchable
 
 #=====================================================================================================
 #                                           Helpers/Utilities
@@ -284,6 +346,18 @@ def fullWordList():
 			for word in words:
 				fullWordList.append(word)
 	return fullWordList
+"""
+908-872-6993
++13106996932
+1 (818) 884-9040
+(510) 642-9255
+dmg5233@lausd.net
 
-
-
+"""
+def formatPhoneNumber(pnStr):
+	if '@' in pnStr or '#' in pnStr or pnStr == "": #or len(pnStr) == 0: #when/why does the length == 0? 
+		return pnStr
+	reformattedStr = ''.join(filter(lambda x: x.isdigit(), pnStr))
+	if reformattedStr[0] == '1':
+		return reformattedStr[1:]
+	return reformattedStr
