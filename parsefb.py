@@ -10,6 +10,7 @@ import os, os.path #parseAllThreads
 import nltk
 import xml.etree.ElementTree as ET #parseSMS
 import itertools
+from titlecase import titlecase #for name/alias matching
 #=====================================================================================================
 #                                  Parsing Messages and Contact Info
 #=====================================================================================================
@@ -17,7 +18,6 @@ personDict = {} #name -> dateTime -> tuple of messages
 fullTextDict = {} #dateTime -> tuple of everyone's messages
 vCardDict = {} #phone number/email -> name
 aliasDict = {} #alias1 -> alias2, alias2 -> alias1
-
 """
 For parsing all Facebook messages into dictionaries
 """
@@ -29,30 +29,18 @@ def parseFBMessages():
 			fb_parser.py_to_json(chat)
 	#jsonFile = json.loads(open('parser/FB-Message-Parser/messages.json').read())
 	jsonFile = json.loads(open('messages.json').read())
-	#global personDict, fullTextDict
+	newPersonDict = {}
+	newFullTextDict = {}
 	for person in jsonFile['threads']:
 		for message in person['messages']:
-			sender = message['sender']
-			if sender not in personDict.keys():
-				personDict[sender] = {}
+			sender = titlecase(message['sender'])
+			text = message['text']
 			dateFormatted = datetime.strptime(message['date_time'], '%A, %B %d, %Y at %I:%M%p ')
-
-			if dateFormatted in personDict[message['sender']].keys():
-				currLst = list(personDict[message['sender']][dateFormatted])
-				currLst.append(message['text'])
-				personDict[message['sender']][dateFormatted] = tuple(currLst)
-			else:
-				personDict[message['sender']][dateFormatted] = tuple([message['text']])
-			if dateFormatted in fullTextDict.keys():
-				currLst = list(fullTextDict[dateFormatted])
-				currLst.append(message['text'])
-				fullTextDict[dateFormatted] = tuple(currLst)
-			else:
-				fullTextDict[dateFormatted] = tuple([message['text']])
-
-	for sender in personDict.keys():
-		personDict[sender] = OrderedDict(sorted(personDict[sender].items(), key=lambda t: t[0]))
-	fullTextDict = OrderedDict(sorted(fullTextDict.items(), key=lambda t: t[0]))
+			addToNewDict(newPersonDict, dateFormatted, text, sender)
+			addToNewDict(newFullTextDict, dateFormatted, text)
+	
+	mergeAndSortPersonDict(newPersonDict)
+	mergeAndSortFullTextDict(newFullTextDict)
 
 """
 Parsing .xml file containing all sms ("Super Backup" for Android)
@@ -66,39 +54,36 @@ def parseSMS(me):
 		for message in root:
 			phoneNumber = formatPhoneNumber(message.attrib['address'])
 			if message.attrib['name']:
-				sender = message.attrib['name'] 
+				sender = titlecase(message.attrib['name'])
 			elif phoneNumber in vCardDict.keys():
-				sender = vCardDict[phoneNumber]
+				sender = titlecase(vCardDict[phoneNumber])
 				if sender not in newNames:
 					newNames.append(sender)
 			else:
 				sender = phoneNumber
 				if sender not in notFound:
 					notFound.append(sender)
-		if personDict.keys():
-			matchAliases(personDict.keys(), newNames)
+		newPersonDict = {}
+		newFullTextDict = {}
+		if newPersonDict.keys():
+			matchAliases(newPersonDict.keys(), newNames)
 		for message in root:
 			date = message.attrib['time']
 			text = message.attrib['body']
-			sender = message.attrib['name'] if message.attrib['name'] else me
-			if sender not in personDict.keys():
+			sender = titlecase(message.attrib['name']) if message.attrib['name'] else me
+			"""
+			if sender not in newPersonDict.keys():
 				if sender in aliasDict.keys():
 					sender = aliasDict[sender]
 				else:
-					personDict[sender] = {}
+					newPersonDict[sender] = {}
+			"""
 			dateFormatted = datetime.strptime(date, '%b %d, %Y %I:%M:%S %p') #"Jul 10, 2016 8:28:10 PM"
-			if dateFormatted in personDict[sender].keys():
-				currLst = list(personDict[sender][dateFormatted])
-				currLst.append(text)
-				personDict[sender][dateFormatted] = tuple(currLst)
-			else:
-				personDict[sender][dateFormatted] = tuple([text])
-			if dateFormatted in fullTextDict.keys():
-				currLst = list(fullTextDict[dateFormatted])
-				currLst.append(text)
-				fullTextDict[dateFormatted] = tuple(currLst)
-			else:
-				fullTextDict[dateFormatted] = tuple([text])
+			addToNewDict(newPersonDict, dateFormatted, text, sender)
+			addToNewDict(newFullTextDict, dateFormatted, text)
+		mergeAndSortPersonDict(newPersonDict)
+		mergeAndSortFullTextDict(newFullTextDict)
+
 	parseVCF()
 	parseSuperBackup()
 	return
@@ -116,14 +101,19 @@ def parseAllThreads(me, folder):
 			person = vCardDict[number]
 		else:
 			return 1
+		newPersonDict = {}
+		newFullTextDict = {}
 		for message in jsonFile['messages']:
 			fromMe = message['is_from_me']
 			date = message['date']
 			text = message['text']
-			sender = me if fromMe else person
-			if sender not in personDict.keys():
-				personDict[sender] = {}
+			sender = me if fromMe else titlecase(person)
+			if sender not in newPersonDict.keys():
+				newPersonDict[sender] = {}
 			dateFormatted = datetime.strptime(date, '%Y-%m-%d %H:%M:%S') #"2016-01-13 23:36:32"
+			addToNewDict(newPersonDict, dateFormatted, text, sender)
+			addToNewDict(newFullTextDict, dateFormatted, text)
+			"""
 			if dateFormatted in personDict[sender].keys():
 				currLst = list(personDict[sender][dateFormatted])
 				currLst.append(text)
@@ -136,6 +126,7 @@ def parseAllThreads(me, folder):
 				fullTextDict[dateFormatted] = tuple(currLst)
 			else:
 				fullTextDict[dateFormatted] = tuple([text])
+			"""
 		return 0
 	notSaved = 0
 	for root, _, files in os.walk(folder):
@@ -183,20 +174,60 @@ def parseVCF():
 			else:
 				parseVCF2()
 def addToNewDict(newDict, dateFormatted, text, sender = None):
-	if sender is None: #fullTextDict
+	if not areEnglishCharacters(sender):
+		return
+	if sender is None: #newFullTextDict
 		if dateFormatted in newDict.keys():
 			currLst = list(newDict[dateFormatted])
 			currLst.append(text)
 			newDict[dateFormatted] = tuple(currLst)
 		else:
 			newDict[dateFormatted] = tuple([text])
-	else:
+	else: #newPersonDict
+		if sender not in newDict.keys():
+			newDict[sender] = {}
 		if dateFormatted in newDict[sender].keys():
 			currLst = list(newDict[sender][dateFormatted])
 			currLst.append(text)
 			newDict[sender][dateFormatted] = tuple(currLst)
 		else:
 			newDict[sender][dateFormatted] = tuple([text])
+
+def mergeAndSortPersonDict(newDict):
+	global personDict
+	if personDict == {}:
+		personDict = newDict
+		for name in personDict:
+			personDict[name] = OrderedDict(sorted(personDict[name].items(), key=lambda t: t[0]))
+		return
+
+	for name in newDict:
+		if name not in personDict.keys():
+			if name not in aliasDict.keys():
+				matchAlias(personDict.keys(), name)
+			trueName = aliasDict[name]
+		for date in newDict[name]:
+			if trueName not in personDict.keys():
+				personDict[trueName] = {}
+			if date not in personDict[trueName]:
+				personDict[trueName][date] = newDict[name][date]
+			else:
+				personDict[trueName][date] = combineMessageTuples(personDict[trueName][date], newDict[name][date])
+		personDict[trueName] = OrderedDict(sorted(personDict[trueName].items(), key=lambda t: t[0]))
+def mergeAndSortFullTextDict(newDict):
+	global fullTextDict
+	if fullTextDict == {}:
+		fullTextDict = newDict
+		fullTextDict = OrderedDict(sorted(fullTextDict.items(), key=lambda t: t[0]))
+		return
+
+	for date in newDict:
+		if date not in fullTextDict:
+			fullTextDict[date] = newDict[person][date]
+		else:
+			fullTextDict[date] = combineMessageTuples(fullTextDict[date], newDict[date])
+	fullTextDict = OrderedDict(sorted(fullTextDict.items(), key=lambda t: t[0]))
+
 
 
 
@@ -215,14 +246,22 @@ def matchAliases(existingNames, otherNames):
 	for otherName in otherNames:
 		candidates = possMatches(otherName, existingNames) #list of possible matches (determined by small edit distance)
 		topCandidate, bestScore = candidates[0]
-		if candidates[1][1] == bestScore: #multiple best matches
-			toCompare = [candidate[0][0]]
-			for candidates in candidates:
-				if candidate[1] == bestScore:
-					writingStyleSimilarityDict[candidate[0]] = writingStyleMatchScore(otherName, candidate[0])
-			topCandidate = sorted(writingStyleSimilarityDict.items(), key = lambda x: writingStyleSimilarityDict[x])[0]
-		aliasDict[name] = topCandidate
-		print(name, candidates)
+		CUTOFFSCORE = 3 #play around with this
+		if bestScore < CUTOFFSCORE:
+			if candidates[1][1] == bestScore: #multiple best matches
+				writingStyleSimilarityDict = {} #candidate existingName -> similarity to otherName 
+				toCompare = [candidates[0][0]]
+				for candidate in candidates:
+					if candidate[1] == bestScore:
+						writingStyleSimilarityDict[candidate[0]] = writingStyleMatchScore(otherName, candidate[0])
+				topCandidate = sorted(writingStyleSimilarityDict.items(), key = lambda x: writingStyleSimilarityDict[x])[0]
+			aliasDict[otherName] = titlecase(topCandidate)
+		else:
+			aliasDict[otherName] = titlecase(otherName)
+		print(otherName, candidates)
+
+def matchAlias(existingNames, otherName):
+	matchAliases(existingNames, [otherName])
 
 def possMatches(name, existingNames, number=5):
 	if name in existingNames:
@@ -445,3 +484,23 @@ def formatPhoneNumber(pnStr):
 	if reformattedStr[0] == '1':
 		return reformattedStr[1:]
 	return reformattedStr
+
+
+def combineMessageTuples(tup1, tup2):
+	currLst1 = list(tup1)
+	currLst2 = list(tup2)
+	currLst1 += currLst2
+	return tuple(currLst1)
+def areEnglishCharacters(s):
+	#return True #remove when needed
+	#http://stackoverflow.com/a/27084708
+
+    if not s:
+    	return True
+    try:
+        s.encode('ascii')
+    except UnicodeEncodeError:
+        return False
+    else:
+        return True
+    
