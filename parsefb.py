@@ -9,12 +9,7 @@ import calendar
 import os, os.path #parseAllThreads
 import nltk
 import xml.etree.ElementTree as ET #parseSMS
-"""
-with open('messages.htm', "r") as f:
-	chat = fb_parser.html_to_py(f)
-	# Dump to json to prove works:
-	fb_parser.py_to_json(chat)
-"""
+import itertools
 #=====================================================================================================
 #                                  Parsing Messages and Contact Info
 #=====================================================================================================
@@ -27,14 +22,21 @@ aliasDict = {} #alias1 -> alias2, alias2 -> alias1
 For parsing all Facebook messages into dictionaries
 """
 def parseFBMessages():
+	if not os.path.isfile('messages.json') :
+		with open('messages.htm', "r") as f:
+			chat = fb_parser.html_to_py(f)
+			# Dump to json to prove works:
+			fb_parser.py_to_json(chat)
 	#jsonFile = json.loads(open('parser/FB-Message-Parser/messages.json').read())
 	jsonFile = json.loads(open('messages.json').read())
-	global personDict, fullTextDict
+	#global personDict, fullTextDict
 	for person in jsonFile['threads']:
 		for message in person['messages']:
-			if message['sender'] not in personDict.keys():
-				personDict[message['sender']] = {}
-			dateFormatted = datetime.strptime(message['date_time'], '%A, %B %d, %Y at %I:%M%p ') 
+			sender = message['sender']
+			if sender not in personDict.keys():
+				personDict[sender] = {}
+			dateFormatted = datetime.strptime(message['date_time'], '%A, %B %d, %Y at %I:%M%p ')
+
 			if dateFormatted in personDict[message['sender']].keys():
 				currLst = list(personDict[message['sender']][dateFormatted])
 				currLst.append(message['text'])
@@ -62,7 +64,6 @@ def parseSMS(me):
 		newNames = []
 		notFound = []
 		for message in root:
-			#sender = message.attrib['name'] if message.attrib['name'] else me
 			phoneNumber = formatPhoneNumber(message.attrib['address'])
 			if message.attrib['name']:
 				sender = message.attrib['name'] 
@@ -74,10 +75,8 @@ def parseSMS(me):
 				sender = phoneNumber
 				if sender not in notFound:
 					notFound.append(sender)
-		#print(newNames)
-		#print(vCardDict.keys())
-		#print(notFound)
-		matchAliases(personDict.keys(), newNames)
+		if personDict.keys():
+			matchAliases(personDict.keys(), newNames)
 		for message in root:
 			date = message.attrib['time']
 			text = message.attrib['body']
@@ -109,7 +108,6 @@ For parsing all imessage threads into dictionaries
 """
 def parseAllThreads(me, folder):
 	def parseThread(me, fileName):
-		global personDict, fullTextDict
 		if vCardDict == {}:
 			parseVCF()
 		jsonFile = json.loads(open(fileName).read())
@@ -152,7 +150,6 @@ Parses file of all vcard data into dictionary mapping phone number/email to name
 All vcards must be in same file.
 """
 def parseVCF():
-	global vCardDict
 	def parseVCF3():
 		for line in vcfFile:
 			if line.startswith('FN'):
@@ -185,6 +182,22 @@ def parseVCF():
 				parseVCF3()
 			else:
 				parseVCF2()
+def addToNewDict(newDict, dateFormatted, text, sender = None):
+	if sender is None: #fullTextDict
+		if dateFormatted in newDict.keys():
+			currLst = list(newDict[dateFormatted])
+			currLst.append(text)
+			newDict[dateFormatted] = tuple(currLst)
+		else:
+			newDict[dateFormatted] = tuple([text])
+	else:
+		if dateFormatted in newDict[sender].keys():
+			currLst = list(newDict[sender][dateFormatted])
+			currLst.append(text)
+			newDict[sender][dateFormatted] = tuple(currLst)
+		else:
+			newDict[sender][dateFormatted] = tuple([text])
+
 
 
 #=====================================================================================================
@@ -193,40 +206,97 @@ def parseVCF():
 """
 add to alias dictionary a mapping from each name in otherNames to a name that's in existing names,
 or adds a new name if no good match is found.
-Step 1: compile list of possible matches by using minEditDistance
+Step 1: compile list of possible matches by using minEditDistance (need to deal with middle names, non-English characters, initials for last names)
+	what to do if there are no good matches? 
 Step 2: Somone is less likely to be a match if the existing name already corresponds to many other names
 Step 3: If there are a few possible matches, match using elements of writing style
 """
 def matchAliases(existingNames, otherNames):
-	for name in otherNames:
-		candidates = possMatches(name, existingNames) #list of possible matches (determined by small edit distance)
-		topCandidate = candidates[0]
+	for otherName in otherNames:
+		candidates = possMatches(otherName, existingNames) #list of possible matches (determined by small edit distance)
+		topCandidate, bestScore = candidates[0]
+		if candidates[1][1] == bestScore: #multiple best matches
+			toCompare = [candidate[0][0]]
+			for candidates in candidates:
+				if candidate[1] == bestScore:
+					writingStyleSimilarityDict[candidate[0]] = writingStyleMatchScore(otherName, candidate[0])
+			topCandidate = sorted(writingStyleSimilarityDict.items(), key = lambda x: writingStyleSimilarityDict[x])[0]
 		aliasDict[name] = topCandidate
-		print(name, topCandidate)
+		print(name, candidates)
 
 def possMatches(name, existingNames, number=5):
-	editDistances = {} #existing name -> min edit distance
+	if name in existingNames:
+		return [(name,0)]
+	similarityScores = {} #existing name -> min edit distance
 	for existingName in existingNames:
-		score = minEditDistance(name, existingName)
-		editDistances[existingName] = score
-	return sorted(editDistances.keys(), key = lambda x: editDistances[x])[:5] #?
+		score = nameSimilarityScore(name, existingName)
+		similarityScores[existingName] = score
+	#return sorted(editDistances.keys(), key = lambda x: editDistances[x])[:5] #?
+	sortedByScore = sorted(similarityScores.items(), key = lambda x: x[1])[:number] #?
+	return sortedByScore
 
-
-def minEditDistance(w1, w2):
-	def diff(a, b):
-		if a == b:
+def nameSimilarityScore(w1, w2):
+	def minEditDistance(partW1, partW2):
+		def diff(a, b):
+			return 0 if a == b else 1
+		if len(partW1) == 0 or len(partW2)==0:
+			return max(len(partW1), len(partW2))
+		table = [[0 for _ in range(len(partW2))] for _ in range(len(partW1))]
+		for i in range(0, len(partW1)):
+			table[i][0] = i
+		for j in range(1, len(partW2)):
+			table[0][j] = j
+		for i in range(1, len(partW1)):
+			for j in range(1, len(partW2)):
+				table[i][j] = min(table[i-1][j] + 1, table[i][j-1] + 1, table[i-1][j-1] + diff(partW1[i], partW2[j]))
+		return table[len(partW1) - 1][len(partW2) - 1]
+	
+	FIRSTNAMEMATCHSCORE = .1 #play around with this value
+	allPartScore = 0
+	splitW1 = w1.split(" ")
+	splitW2 = w2.split(" ")
+	if splitW1[0] == splitW2[0]: #first name match
+		if splitW1[len(splitW1)-1] == splitW2[len(splitW2)-1]: #first and last name match
 			return 0
-		return 1
+		else:
+			if len(splitW1) == 1 or len(splitW2) == 1:#one of the names is just a first name
+				return FIRSTNAMEMATCHSCORE
+			else: #both are more than just a first name
+				splitW1 = splitW1[1:]
+				splitW2 = splitW2[1:]
+	w1 = " ".join(splitW1)
+	w2 = " ".join(splitW2)
+	return minEditDistance(w1, w2)
+	
+	"""
+	allPartScore = minEditDistance(w1, w2)
+	if len(splitW1) == len(splitW2) or allPartScore < (abs(len(w1)-len(w2))*2): #is there a better multiplier?
+		return allPartScore 
+	else:
+		if len(splitW1) > len(splitW2):
+			extra = splitW1
+			less = splitW2
+		else:
+			extra = splitW2
+			less = splitW1
+		extraPartTups = itertools.combinations(extra, len(less))
+		minScore = allPartScore
+		for extraPartTup in extraPartTups:
+			score = 0
+			for i in range(len(extraPartTup)):
+				score += minEditDistance(extraPartTup[i], less[i])
+			minScore = min(score, minScore)
+		return minScore
+	"""
 
-	table = [[0 for _ in range(len(w2))] for _ in range(len(w1))]
-	for i in range(0, len(w1)):
-		table[i][0] = i
-	for j in range(1, len(w2)):
-		table[0][j] = j
-	for i in range(1, len(w1)):
-		for j in range(1, len(w2)):
-			table[i][j] = min(table[i-1][j] + 1, table[i][j-1] + 1, table[i-1][j-1] + diff(w1[i], w2[j]))
-	return table[len(w1) - 1][len(w2) - 1]
+def writingStyleMatchScore(otherName, possibleExistingMatch):
+	"""
+	existingNameText =  
+	possMatchText = 
+	"""
+	
+
+
 
 
 
@@ -346,6 +416,20 @@ def fullWordList():
 			for word in words:
 				fullWordList.append(word)
 	return fullWordList
+
+def fullWordList(existingName, sourceDict):
+	fullWordList = []
+	for messTup in sourceDict.values():
+		i = 0
+		if i>0:
+			break
+		i += 1
+		for mess in messTup:
+			words = mess.split(" ")
+			for word in words:
+				fullWordList.append(word)
+	return fullWordList
+
 """
 908-872-6993
 +13106996932
