@@ -11,6 +11,7 @@ import nltk
 import xml.etree.ElementTree as ET #parseSMS
 import itertools
 from titlecase import titlecase #for name/alias matching
+from sklearn.feature_extraction.text import TfidfVectorizer #finding similarity between two texts, requires scipy
 #=====================================================================================================
 #                                  Parsing Messages and Contact Info
 #=====================================================================================================
@@ -49,6 +50,9 @@ def parseSMS(me):
 	def parseSuperBackup():
 		tree = ET.parse('allsms.xml') #fix this later
 		root = tree.getroot()
+		newPersonDict = {}
+		newFullTextDict = {}
+		"""
 		newNames = []
 		notFound = []
 		for message in root:
@@ -63,10 +67,10 @@ def parseSMS(me):
 				sender = phoneNumber
 				if sender not in notFound:
 					notFound.append(sender)
-		newPersonDict = {}
-		newFullTextDict = {}
+		
 		if newPersonDict.keys():
 			matchAliases(newPersonDict.keys(), newNames)
+		"""
 		for message in root:
 			date = message.attrib['time']
 			text = message.attrib['body']
@@ -204,8 +208,10 @@ def mergeAndSortPersonDict(newDict):
 	for name in newDict:
 		if name not in personDict.keys():
 			if name not in aliasDict.keys():
-				matchAlias(personDict.keys(), name)
+				matchAlias(personDict.keys(), name, newDict)
 			trueName = aliasDict[name]
+		else:
+			trueName = name
 		for date in newDict[name]:
 			if trueName not in personDict.keys():
 				personDict[trueName] = {}
@@ -242,7 +248,7 @@ Step 1: compile list of possible matches by using minEditDistance (need to deal 
 Step 2: Somone is less likely to be a match if the existing name already corresponds to many other names
 Step 3: If there are a few possible matches, match using elements of writing style
 """
-def matchAliases(existingNames, otherNames):
+def matchAliases(existingNames, otherNames, otherNamesDict):
 	for otherName in otherNames:
 		candidates = possMatches(otherName, existingNames) #list of possible matches (determined by small edit distance)
 		topCandidate, bestScore = candidates[0]
@@ -253,15 +259,16 @@ def matchAliases(existingNames, otherNames):
 				toCompare = [candidates[0][0]]
 				for candidate in candidates:
 					if candidate[1] == bestScore:
-						writingStyleSimilarityDict[candidate[0]] = writingStyleMatchScore(otherName, candidate[0])
+						writingStyleSimilarityDict[candidate[0]] = writingStyleMatchScore(otherName, otherNamesDict, candidate[0])
 				topCandidate = sorted(writingStyleSimilarityDict.items(), key = lambda x: writingStyleSimilarityDict[x])[0]
 			aliasDict[otherName] = titlecase(topCandidate)
 		else:
 			aliasDict[otherName] = titlecase(otherName)
 		print(otherName, candidates)
 
-def matchAlias(existingNames, otherName):
-	matchAliases(existingNames, [otherName])
+def matchAlias(existingNames, otherName, otherNamesDict):
+	matchAliases(existingNames, [otherName], otherNamesDict)
+	return aliasDict[otherName]
 
 def possMatches(name, existingNames, number=5):
 	if name in existingNames:
@@ -328,15 +335,20 @@ def nameSimilarityScore(w1, w2):
 		return minScore
 	"""
 
-def writingStyleMatchScore(otherName, possibleExistingMatch):
-	"""
-	existingNameText =  
-	possMatchText = 
-	"""
+def writingStyleMatchScore(otherName, otherNamesDict, possibleExistingMatch):
+	#http://stackoverflow.com/a/8897648
+	existingNameText = " ".join(fullMessageList(possibleExistingMatch))
+	otherNameText = " ".join(fullMessageList(otherName, otherNamesDict)) 
+	print(otherNameText)
+	print(type(otherNameText))
+	print(otherName)
+	vect = TfidfVectorizer(min_df=1)
+	score = vect.fit_transform(existingNameText, otherNameText)
+	print(score)
+	return score
 	
 
-
-
+	
 
 
 #=====================================================================================================
@@ -441,6 +453,24 @@ def numMessagesMonth(person, monthStart, monthEnd):
 		if datetime >= monthStart and datetime <= monthEnd:
 			count += 1
 	return count
+def fullMessageList(name, sourceDict=None):
+	if not sourceDict:
+		sourceDict = personDict[name]
+	fullMessageList = []
+	for messTups in sourceDict.values():
+		if type(messTups) == dict:
+			messTups = messTups.values()
+		i = 0
+		if i>0:
+			break
+		i += 1
+		for message in messTups:
+			if type(message) == tuple:
+				for mess in message:
+					fullMessageList.append(mess)
+			else:
+				fullMessageList.append(message)
+	return fullMessageList
 def fullWordList():
 	fullWordList = []
 	if fullTextDict == {}:
@@ -456,17 +486,27 @@ def fullWordList():
 				fullWordList.append(word)
 	return fullWordList
 
-def fullWordList(existingName, sourceDict):
+def fullWordList(name, sourceDict=None):
+	if not sourceDict:
+		sourceDict = personDict[name]
 	fullWordList = []
-	for messTup in sourceDict.values():
+	for messTups in sourceDict.values():
+		if type(messTups) == dict:
+			messTups = messTups.values()
 		i = 0
 		if i>0:
 			break
 		i += 1
-		for mess in messTup:
-			words = mess.split(" ")
-			for word in words:
-				fullWordList.append(word)
+		for message in messTups:
+			if type(message) == tuple:
+				for mess in message:
+					words = mess.split(" ")
+					for word in words:
+						fullWordList.append(word)
+			else:
+				words = message.split(" ")
+				for word in words:
+					fullWordList.append(word)
 	return fullWordList
 
 """
