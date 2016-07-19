@@ -11,7 +11,8 @@ import nltk
 import xml.etree.ElementTree as ET #parseSMS
 import itertools
 from titlecase import titlecase #for name/alias matching
-from sklearn.feature_extraction.text import TfidfVectorizer #finding similarity between two texts, requires scipy
+from sklearn.metrics.pairwise import cosine_similarity #finding similarity between two texts, requires scipy
+from sklearn.feature_extraction.text import TfidfVectorizer #make tf-idf matrix
 #=====================================================================================================
 #                                  Parsing Messages and Contact Info
 #=====================================================================================================
@@ -229,7 +230,7 @@ def mergeAndSortFullTextDict(newDict):
 
 	for date in newDict:
 		if date not in fullTextDict:
-			fullTextDict[date] = newDict[person][date]
+			fullTextDict[date] = newDict[date]
 		else:
 			fullTextDict[date] = combineMessageTuples(fullTextDict[date], newDict[date])
 	fullTextDict = OrderedDict(sorted(fullTextDict.items(), key=lambda t: t[0]))
@@ -260,7 +261,7 @@ def matchAliases(existingNames, otherNames, otherNamesDict):
 				for candidate in candidates:
 					if candidate[1] == bestScore:
 						writingStyleSimilarityDict[candidate[0]] = writingStyleMatchScore(otherName, otherNamesDict, candidate[0])
-				topCandidate = sorted(writingStyleSimilarityDict.items(), key = lambda x: writingStyleSimilarityDict[x])[0]
+				topCandidate = sorted(writingStyleSimilarityDict.keys(), key = lambda x: writingStyleSimilarityDict[x])[0]
 			aliasDict[otherName] = titlecase(topCandidate)
 		else:
 			aliasDict[otherName] = titlecase(otherName)
@@ -338,16 +339,12 @@ def nameSimilarityScore(w1, w2):
 def writingStyleMatchScore(otherName, otherNamesDict, possibleExistingMatch):
 	#http://stackoverflow.com/a/8897648
 	existingNameText = " ".join(fullMessageList(possibleExistingMatch))
-	otherNameText = " ".join(fullMessageList(otherName, otherNamesDict)) 
-	print(otherNameText)
-	print(type(otherNameText))
-	print(otherName)
-	vect = TfidfVectorizer(min_df=1)
-	score = vect.fit_transform(existingNameText, otherNameText)
-	print(score)
-	return score
-	
-
+	otherNameText = " ".join(fullMessageList(otherName, otherNamesDict))
+	tfidf_vectorizer = TfidfVectorizer(min_df=1)
+	tfidf_matrix = tfidf_vectorizer.fit_transform(tuple([existingNameText, otherNameText]))
+	similarity = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:])[0][0]
+	print(otherName, possibleExistingMatch, similarity)
+	return similarity
 	
 
 
@@ -435,7 +432,9 @@ def plotTopFriendsOverTime(me, number):
 	plt.show()
 
 #make messages searchable
-
+#most similar friends in terms of words used
+#make function that makes huge png of all messages (maybe in shape of picture)
+	
 #=====================================================================================================
 #                                           Helpers/Utilities
 #=====================================================================================================
