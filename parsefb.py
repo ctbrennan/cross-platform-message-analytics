@@ -391,7 +391,7 @@ def topFriends(me, number):
 			return topFriends
 			break
 
-def topFriendsMonth(me, number, month, year) : 
+def topFriendsMonth(me, number, month, year): 
 	monthStart = datetime(int(year), int(month), 1)
 	monthEnd = datetime(int(year), int(month), calendar.monthrange(int(year),int(month))[1])
 	if personDict == {}:
