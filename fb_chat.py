@@ -1,3 +1,4 @@
+##Author: https://github.com/alexwlchan
 class Chat(object):
     """Contains a list of Threads"""
 

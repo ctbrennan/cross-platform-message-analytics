@@ -1,3 +1,4 @@
+##Author: https://github.com/alexwlchan
 #!/usr/bin/env python3
 
 import json
