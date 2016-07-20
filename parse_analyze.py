@@ -97,17 +97,18 @@ def parseSMS(me):
 For parsing all imessage threads into dictionaries
 """
 def parseAllThreads(me, folder):
+	global vCardDict
+	newPersonDict = {}
+	newFullTextDict = {}
 	def parseThread(me, fileName):
 		if vCardDict == {}:
 			parseVCF()
 		jsonFile = json.loads(open(fileName).read())
-		number = jsonFile['messages'][0]['handle_id']
+		number = formatPhoneNumber(jsonFile['messages'][0]['handle_id'])
 		if number in vCardDict.keys():
 			person = vCardDict[number]
 		else:
 			return 1
-		newPersonDict = {}
-		newFullTextDict = {}
 		for message in jsonFile['messages']:
 			fromMe = message['is_from_me']
 			date = message['date']
@@ -133,11 +134,12 @@ def parseAllThreads(me, folder):
 				fullTextDict[dateFormatted] = tuple([text])
 			"""
 		return 0
-	notSaved = 0
-	for root, _, files in os.walk(folder):
-	    for f in files:
-	        fullpath = os.path.join(root, f)
-	        notSaved += parseThread(me, fullpath)
+	for root, _, files in list(os.walk(folder)):
+		for f in files:
+			fullpath = os.path.join(root, f)
+			parseThread(me, fullpath)
+	mergeAndSortPersonDict(newPersonDict)
+	mergeAndSortFullTextDict(newFullTextDict)
 	#print(notSaved)
 
 
@@ -146,6 +148,7 @@ Parses file of all vcard data into dictionary mapping phone number/email to name
 All vcards must be in same file.
 """
 def parseVCF():
+	global vCardDict
 	def parseVCF3():
 		for line in vcfFile:
 			if line.startswith('FN'):
@@ -252,17 +255,24 @@ Step 3: If there are a few possible matches, match using elements of writing sty
 def matchAliases(existingNames, otherNames, otherNamesDict):
 	for otherName in otherNames:
 		candidates = possMatches(otherName, existingNames) #list of possible matches (determined by small edit distance)
+		topCandidates = candidates[0:len(candidates)][0]
 		topCandidate, bestScore = candidates[0]
 		CUTOFFSCORE = 3 #play around with this
 		if bestScore < CUTOFFSCORE:
-			if candidates[1][1] == bestScore: #multiple best matches
+			if candidates[1][1] >= bestScore - 1: #multiple best matches within 1 of eachother
 				writingStyleSimilarityDict = {} #candidate existingName -> similarity to otherName 
 				toCompare = [candidates[0][0]]
 				for candidate in candidates:
 					if candidate[1] == bestScore:
 						writingStyleSimilarityDict[candidate[0]] = writingStyleMatchScore(otherName, otherNamesDict, candidate[0])
-				topCandidate = sorted(writingStyleSimilarityDict.keys(), key = lambda x: writingStyleSimilarityDict[x])[0]
-			aliasDict[otherName] = titlecase(topCandidate)
+				topCandidates = sorted(writingStyleSimilarityDict.keys(), key = lambda x: -writingStyleSimilarityDict[x])
+				i = 0
+				response = False
+				while response == False and i < len(topCandidates):
+					topCandidate = topCandidates[i]
+					response = True if input("Enter 'y' if " + otherName + " should be matched with " + topCandidate) == 'y' else False
+					i += 1
+				aliasDict[otherName] = titlecase(topCandidate)
 		else:
 			aliasDict[otherName] = titlecase(otherName)
 		print(otherName, candidates)
@@ -520,7 +530,9 @@ def formatPhoneNumber(pnStr):
 	if '@' in pnStr or '#' in pnStr or pnStr == "": #or len(pnStr) == 0: #when/why does the length == 0? 
 		return pnStr
 	reformattedStr = ''.join(filter(lambda x: x.isdigit(), pnStr))
-	if reformattedStr[0] == '1':
+	if not reformattedStr:
+		return 
+	elif reformattedStr[0] == '1':
 		return reformattedStr[1:]
 	return reformattedStr
 
@@ -534,12 +546,12 @@ def areEnglishCharacters(s):
 	#return True #remove when needed
 	#http://stackoverflow.com/a/27084708
 
-    if not s:
-    	return True
-    try:
-        s.encode('ascii')
-    except UnicodeEncodeError:
-        return False
-    else:
-        return True
-    
+	if not s:
+		return True
+	try:
+		s.encode('ascii')
+	except UnicodeEncodeError:
+		return False
+	else:
+		return True
+	
