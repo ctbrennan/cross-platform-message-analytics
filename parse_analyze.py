@@ -53,12 +53,14 @@ def parseSMS(me):
 		root = tree.getroot()
 		newPersonDict = {}
 		newFullTextDict = {}
-		"""
+
 		newNames = []
 		notFound = []
 		for message in root:
 			phoneNumber = formatPhoneNumber(message.attrib['address'])
-			if message.attrib['name']:
+			if message.attrib['type'] == '2':
+				sender = me
+			elif message.attrib['name']:
 				sender = titlecase(message.attrib['name'])
 			elif phoneNumber in vCardDict.keys():
 				sender = titlecase(vCardDict[phoneNumber])
@@ -67,22 +69,9 @@ def parseSMS(me):
 			else:
 				sender = phoneNumber
 				if sender not in notFound:
-					notFound.append(sender)
-		
-		if newPersonDict.keys():
-			matchAliases(newPersonDict.keys(), newNames)
-		"""
-		for message in root:
+					notFound.append(sender)		
 			date = message.attrib['time']
 			text = message.attrib['body']
-			sender = titlecase(message.attrib['name']) if message.attrib['name'] else me
-			"""
-			if sender not in newPersonDict.keys():
-				if sender in aliasDict.keys():
-					sender = aliasDict[sender]
-				else:
-					newPersonDict[sender] = {}
-			"""
 			dateFormatted = datetime.strptime(date, '%b %d, %Y %I:%M:%S %p') #"Jul 10, 2016 8:28:10 PM"
 			addToNewDict(newPersonDict, dateFormatted, text, sender)
 			addToNewDict(newFullTextDict, dateFormatted, text)
@@ -140,8 +129,6 @@ def parseAllThreads(me, folder):
 			parseThread(me, fullpath)
 	mergeAndSortPersonDict(newPersonDict)
 	mergeAndSortFullTextDict(newFullTextDict)
-	#print(notSaved)
-
 
 """
 Parses file of all vcard data into dictionary mapping phone number/email to name.
@@ -259,7 +246,10 @@ def matchAliases(existingNames, otherNames, otherNamesDict):
 		topCandidate, bestScore = candidates[0]
 		CUTOFFSCORE = 3 #play around with this
 		if bestScore < CUTOFFSCORE:
-			if candidates[1][1] >= bestScore - 1: #multiple best matches within 1 of eachother
+			if otherName.isdigit(): #phone number
+				aliasDict[otherName] = otherName
+			#if candidates[1][1] >= bestScore - 1: #multiple best matches within 1 of eachother
+			elif candidates[1][1] == bestScore: #multiple best matches equal to eachother	
 				writingStyleSimilarityDict = {} #candidate existingName -> similarity to otherName 
 				toCompare = [candidates[0][0]]
 				for candidate in candidates:
@@ -270,12 +260,12 @@ def matchAliases(existingNames, otherNames, otherNamesDict):
 				response = False
 				while response == False and i < len(topCandidates):
 					topCandidate = topCandidates[i]
-					response = True if input("Enter 'y' if " + otherName + " should be matched with " + topCandidate) == 'y' else False
+					response = True if 'y' in input("Enter 'y' if " + otherName + " should be matched with " + topCandidate) else False
 					i += 1
-				aliasDict[otherName] = titlecase(topCandidate)
+			aliasDict[otherName] = titlecase(topCandidate)
 		else:
 			aliasDict[otherName] = titlecase(otherName)
-		print(otherName, candidates)
+		#print(otherName, candidates)
 
 def matchAlias(existingNames, otherName, otherNamesDict):
 	matchAliases(existingNames, [otherName], otherNamesDict)
@@ -324,39 +314,16 @@ def nameSimilarityScore(w1, w2):
 	w1 = " ".join(splitW1)
 	w2 = " ".join(splitW2)
 	return minEditDistance(w1, w2)
-	
-	"""
-	allPartScore = minEditDistance(w1, w2)
-	if len(splitW1) == len(splitW2) or allPartScore < (abs(len(w1)-len(w2))*2): #is there a better multiplier?
-		return allPartScore 
-	else:
-		if len(splitW1) > len(splitW2):
-			extra = splitW1
-			less = splitW2
-		else:
-			extra = splitW2
-			less = splitW1
-		extraPartTups = itertools.combinations(extra, len(less))
-		minScore = allPartScore
-		for extraPartTup in extraPartTups:
-			score = 0
-			for i in range(len(extraPartTup)):
-				score += minEditDistance(extraPartTup[i], less[i])
-			minScore = min(score, minScore)
-		return minScore
-	"""
 
 def writingStyleMatchScore(otherName, otherNamesDict, possibleExistingMatch):
-	#http://stackoverflow.com/a/8897648
+	#http://blog.christianperone.com/2013/09/machine-learning-cosine-similarity-for-vector-space-models-part-iii/
 	existingNameText = " ".join(fullMessageList(possibleExistingMatch))
 	otherNameText = " ".join(fullMessageList(otherName, otherNamesDict))
 	tfidf_vectorizer = TfidfVectorizer(min_df=1)
 	tfidf_matrix = tfidf_vectorizer.fit_transform(tuple([existingNameText, otherNameText]))
 	similarity = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:])[0][0]
-	print(otherName, possibleExistingMatch, similarity)
+	#print(otherName, possibleExistingMatch, similarity)
 	return similarity
-	
-
 
 #=====================================================================================================
 #                                        Analytics/Fun
@@ -440,10 +407,55 @@ def plotTopFriendsOverTime(me, number):
 		plt.plot(countList, label = friend)
 	plt.legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.)
 	plt.show()
+	"""
+def mostSimilarFriends():
+	pairSimilarity = {} #(friend1, friend2) -> score
+	for friend1 in personDict:
+		for friend2 in personDict:
+			if friend1 != friend2 and (friend2, friend1) not in pairSimilarity.keys():
+				score = writingStyleMatchScore(friend1, friend2)
+				pairSimilarity[(friend1, friend2)] = score
+	sortedByScore = sorted(pairSimilarity.items(), key = lambda x: -x[1])
+	print(sortedByScore[:10])
+	"""
+def mostSimilarFriends():
+	return maxPairWritingStyleMatchScore(personDict.keys())
+
+def maxPairWritingStyleMatchScore(people, number = 10):
+	#http://blog.christianperone.com/2013/09/machine-learning-cosine-similarity-for-vector-space-models-part-iii/
+	textList = []
+	orderingDict = {} # i -> name
+	scoreDict = {} #(personi, personj) -> score
+	i = 0
+	for p in people:
+		pText = " ".join(fullMessageList(p))
+		textList.append(pText)
+		orderingDict[i] = p
+		i += 1
+	tfidf_vectorizer = TfidfVectorizer(min_df=1)
+	tfidf_matrix = tfidf_vectorizer.fit_transform(tuple(textList))
+	for i in range(tfidf_matrix.shape[0]):
+		for j in range(tfidf_matrix.shape[0]):
+			if i < j and len(personDict[orderingDict[i]]) > 100 and len(personDict[orderingDict[j]]) > 100: #minimum of 100 messages for both people
+				score = cosine_similarity(tfidf_matrix[i:i+1], tfidf_matrix[j:j+1])[0][0]
+				#print(similarity)
+				if len(scoreDict) <= number: #number of pairs
+					scoreDict[(i,j)] = score
+				else:
+					sortedScores = sorted(scoreDict.items(), key = lambda x: x[1])
+					leastSim = sortedScores[0]
+					if leastSim[1] < score:
+						del scoreDict[leastSim[0]]
+						scoreDict[(i,j)] = score
+				# 	del scoreDict[sortedScores[0][0]]
+				# 	scoreDict[(i,j)] = similarities[j]
+	return [(orderingDict[i], orderingDict[j], score) for (i,j), score in sorted(scoreDict.items(), key = lambda x: -x[1])]
 
 #make messages searchable
 #most similar friends in terms of words used
 #make function that makes huge png of all messages (maybe in shape of picture)
+
+
 	
 #=====================================================================================================
 #                                           Helpers/Utilities
@@ -542,10 +554,10 @@ def combineMessageTuples(tup1, tup2):
 	currLst2 = list(tup2)
 	currLst1 += currLst2
 	return tuple(currLst1)
+
 def areEnglishCharacters(s):
 	#return True #remove when needed
 	#http://stackoverflow.com/a/27084708
-
 	if not s:
 		return True
 	try:
@@ -554,4 +566,12 @@ def areEnglishCharacters(s):
 		return False
 	else:
 		return True
-	
+
+
+
+def main():
+	parseFBMessages()
+	parseSMS('Connor Brennan')
+
+if __name__ == "__main__":
+    main()
