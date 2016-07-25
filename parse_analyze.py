@@ -1,6 +1,7 @@
 import sys
 #sys.path.insert(0, '/home/connor/Documents/prj/parser/FB-Message-Parser/')
 import fb_parser
+import imessage_export
 from collections import OrderedDict
 import json
 from datetime import datetime
@@ -16,6 +17,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer #make tf-idf matrix
 #=====================================================================================================
 #                                  Parsing Messages and Contact Info
 #=====================================================================================================
+me = None
 personDict = {} #name -> dateTime -> tuple of messages
 fullTextDict = {} #dateTime -> tuple of everyone's messages
 vCardDict = {} #phone number/email -> name
@@ -85,7 +87,7 @@ def parseSMS(me):
 """
 For parsing all imessage threads into dictionaries
 """
-def parseAllThreads(me, folder):
+def parseAllThreads(folder=None):
 	global vCardDict
 	newPersonDict = {}
 	newFullTextDict = {}
@@ -123,6 +125,18 @@ def parseAllThreads(me, folder):
 				fullTextDict[dateFormatted] = tuple([text])
 			"""
 		return 0
+	if not folder or not os.path.exists(folder):
+		wantsToParse = True if 'y' in input("Enter 'y' if you would like to parse your iMessageDatabase (please make a backup first)") else False
+		if not wantsToParse:
+			return
+		folder = folder if folder else "./chatparsed2"
+		for file in os.listdir(os.getcwd()): #for file in working directory
+			if file.endswith(".db"):
+				sqlPath = file
+				break
+		print(sqlPath)
+		#imessage_export.main("-i " + sqlPath, "-o " + folder)
+		imessage_export.main(sqlPath, folder)
 	for root, _, files in list(os.walk(folder)):
 		for f in files:
 			fullpath = os.path.join(root, f)
@@ -492,6 +506,7 @@ def fullMessageList(name, sourceDict=None):
 			else:
 				fullMessageList.append(message)
 	return fullMessageList
+
 def fullWordList():
 	fullWordList = []
 	if fullTextDict == {}:
@@ -569,9 +584,12 @@ def areEnglishCharacters(s):
 
 
 
-def main():
-	parseFBMessages()
-	parseSMS('Connor Brennan')
+def main(username):
+	global me
+	me = username
+	#parseFBMessages()
+	#parseSMS(me)
+	parseAllThreads()
 
 if __name__ == "__main__":
-    main()
+    main(sys.argv[0])
