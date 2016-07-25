@@ -112,7 +112,7 @@ def parseAllThreads(folder=None):
 			addToNewDict(newPersonDict, dateFormatted, text, sender)
 			addToNewDict(newFullTextDict, dateFormatted, text)	
 		return 0
-		
+
 	if not folder or not os.path.exists(folder):
 		wantsToParse = True if 'y' in input("Enter 'y' if you would like to parse your iMessageDatabase (please make a backup first)") else False
 		if not wantsToParse:
@@ -160,7 +160,14 @@ def parseVCF():
 				number = number.rstrip()
 				number = formatPhoneNumber(number) #trying this out
 				vCardDict[number] = currName
-	vcfFile = open('all.vcf', 'r')#need to fix later
+	vcfFile = open('allme.vcf', 'r')#need to change to below, eventually
+	"""
+	#only works if there's only one .vcf file		
+	for file in os.listdir(os.getcwd()): #for file in working directory
+			if file.endswith(".vcf"):
+				vcfFile = file
+				break
+	"""
 	i = 0
 	for line in vcfFile: #hacky, consider changing
 		i += 1
@@ -247,7 +254,8 @@ def matchAliases(existingNames, otherNames, otherNamesDict):
 		candidates = possMatches(otherName, existingNames) #list of possible matches (determined by small edit distance)
 		topCandidates = candidates[0:len(candidates)][0]
 		topCandidate, bestScore = candidates[0]
-		CUTOFFSCORE = 3 #play around with this
+		CUTOFFSCORE = 2 #play around with this
+		correctMatch = False
 		if bestScore < CUTOFFSCORE:
 			if otherName.isdigit(): #phone number
 				aliasDict[otherName] = otherName
@@ -260,12 +268,16 @@ def matchAliases(existingNames, otherNames, otherNamesDict):
 						writingStyleSimilarityDict[candidate[0]] = writingStyleMatchScore(otherName, otherNamesDict, candidate[0])
 				topCandidates = sorted(writingStyleSimilarityDict.keys(), key = lambda x: -writingStyleSimilarityDict[x])
 				i = 0
-				response = False
-				while response == False and i < len(topCandidates):
+				while not correctMatch and i < len(topCandidates):
 					topCandidate = topCandidates[i]
-					response = True if 'y' in input("Enter 'y' if " + otherName + " should be matched with " + topCandidate) else False
-					i += 1
-			aliasDict[otherName] = titlecase(topCandidate)
+					correctMatch = True if 'y' in input("Enter 'y' if " + otherName + " should be matched with " + topCandidate) else False
+					i += 1	
+			else:
+				correctMatch = True if 'y' in input("Enter 'y' if " + otherName + " should be matched with " + topCandidate) else False
+			if correctMatch:
+				aliasDict[otherName] = topCandidate
+			else:
+				aliasDict[otherName] = titlecase(otherName)
 		else:
 			aliasDict[otherName] = titlecase(otherName)
 		#print(otherName, candidates)
@@ -352,10 +364,7 @@ def wordCloud(personStr):
 	plt.axis("off")
 	plt.show()
 
-def topFriends(me, number):
-	if personDict == {}:
-		parseFBMessages()
-	#temp = OrderedDict(sorted(personDict.keys(), key=lambda t: t[0]))
+def topFriends(number):
 	temp = sorted(personDict.keys(), key=lambda x: -len(personDict[x]))
 	i = 0
 	topFriends = []
@@ -368,12 +377,9 @@ def topFriends(me, number):
 			return topFriends
 			break
 
-def topFriendsMonth(me, number, month, year): 
+def topFriendsMonth(number, month, year): 
 	monthStart = datetime(int(year), int(month), 1)
 	monthEnd = datetime(int(year), int(month), calendar.monthrange(int(year),int(month))[1])
-	if personDict == {}:
-		parseFBMessages()
-	#temp = sorted(personDict.keys(), key= lambda x: -numMessagesMonth(x, month, year))
 	temp = sorted(personDict.keys(), key= lambda x: -numMessagesMonth(x, monthStart, monthEnd))
 	
 	i = 0
@@ -388,16 +394,14 @@ def topFriendsMonth(me, number, month, year):
 			break
 
 
-def plotTopFriendsOverTime(me, number):
+def plotTopFriends(number = 15):
 	import matplotlib.pyplot as plt
-	if personDict == {}:
-		parseFBMessages()
 	earliestDateTime = min(fullTextDict.keys())
 	earliestYear = earliestDateTime.year
 	lastDateTime = max(fullTextDict.keys())
 	lastYear = lastDateTime.year
 	messageCount = {} #key = person, value = [month1count, month2count, ...]
-	topFriendsList = topFriends(me, number)
+	topFriendsList = topFriends(number)
 	for friend in topFriendsList:
 		messageCount[friend] = []
 	for year in range(earliestYear, lastYear+1):
@@ -405,9 +409,11 @@ def plotTopFriendsOverTime(me, number):
 				monthStart = datetime(int(year), int(month), 1)
 				monthEnd = datetime(int(year), int(month), calendar.monthrange(int(year),int(month))[1])
 				for friend in topFriendsList:
-					messageCount[friend].append(numMessagesMonth(friend, monthStart, monthEnd))
-	for friend, countList in messageCount.items():
-		plt.plot(countList, label = friend)
+					messageCount[friend].append((monthStart, numMessagesMonth(friend, monthStart, monthEnd)))
+	for friend, mcTups in sorted(messageCount.items(), key= lambda x: -sum([count for month, count in x[1]])):
+		counts = [count for (monthStart, count) in mcTups]
+		months = [monthStart for (monthStart, count) in mcTups]
+		plt.plot(months, counts, label = friend)
 	plt.legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.)
 	plt.show()
 	"""
@@ -470,8 +476,6 @@ def getAllMessagesAsString(personStr):
 			string += message + " "
 	return string
 def numMessagesMonth(person, monthStart, monthEnd):
-	# monthStart = datetime(int(year), int(month), 1)
-	# monthEnd = datetime(int(year), int(month), calendar.monthrange(int(year),int(month))[1])
 	count = 0
 	for datetime in personDict[person]:
 		if datetime >= monthStart and datetime <= monthEnd:
@@ -498,8 +502,6 @@ def fullMessageList(name, sourceDict=None):
 
 def fullWordList():
 	fullWordList = []
-	if fullTextDict == {}:
-		parseFBMessages()
 	for messTup in fullTextDict.values():
 		i = 0
 		if i>0:
@@ -576,9 +578,9 @@ def areEnglishCharacters(s):
 def main(username):
 	global me
 	me = username
-	#parseFBMessages()
-	#parseSMS(me)
-	parseAllThreads()
+	parseFBMessages()
+	parseSMS(me)
+	#parseAllThreads()
 
 if __name__ == "__main__":
-    main(sys.argv[0])
+    main(sys.argv[1])
