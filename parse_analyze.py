@@ -108,33 +108,20 @@ def parseAllThreads(folder=None):
 			if sender not in newPersonDict.keys():
 				newPersonDict[sender] = {}
 			dateFormatted = datetime.strptime(date, '%Y-%m-%d %H:%M:%S') #"2016-01-13 23:36:32"
+			
 			addToNewDict(newPersonDict, dateFormatted, text, sender)
-			addToNewDict(newFullTextDict, dateFormatted, text)
-			"""
-			if dateFormatted in personDict[sender].keys():
-				currLst = list(personDict[sender][dateFormatted])
-				currLst.append(text)
-				personDict[sender][dateFormatted] = tuple(currLst)
-			else:
-				personDict[sender][dateFormatted] = tuple([text])
-			if dateFormatted in fullTextDict.keys():
-				currLst = list(fullTextDict[dateFormatted])
-				currLst.append(text)
-				fullTextDict[dateFormatted] = tuple(currLst)
-			else:
-				fullTextDict[dateFormatted] = tuple([text])
-			"""
+			addToNewDict(newFullTextDict, dateFormatted, text)	
 		return 0
+		
 	if not folder or not os.path.exists(folder):
 		wantsToParse = True if 'y' in input("Enter 'y' if you would like to parse your iMessageDatabase (please make a backup first)") else False
 		if not wantsToParse:
 			return
-		folder = folder if folder else "./chatparsed2"
+		folder = folder if folder else "./chatparsed2/threads/"
 		for file in os.listdir(os.getcwd()): #for file in working directory
 			if file.endswith(".db"):
 				sqlPath = file
 				break
-		print(sqlPath)
 		#imessage_export.main("-i " + sqlPath, "-o " + folder)
 		imessage_export.main(sqlPath, folder)
 	for root, _, files in list(os.walk(folder)):
@@ -173,7 +160,7 @@ def parseVCF():
 				number = number.rstrip()
 				number = formatPhoneNumber(number) #trying this out
 				vCardDict[number] = currName
-	vcfFile = open('allme.vcf', 'r')#need to fix later
+	vcfFile = open('all.vcf', 'r')#need to fix later
 	i = 0
 	for line in vcfFile: #hacky, consider changing
 		i += 1
@@ -187,18 +174,20 @@ def addToNewDict(newDict, dateFormatted, text, sender = None):
 		return
 	if sender is None: #newFullTextDict
 		if dateFormatted in newDict.keys():
-			currLst = list(newDict[dateFormatted])
-			currLst.append(text)
-			newDict[dateFormatted] = tuple(currLst)
+			if text not in newDict[dateFormatted]:
+				currLst = list(newDict[dateFormatted])
+				currLst.append(text)
+				newDict[dateFormatted] = tuple(currLst)
 		else:
 			newDict[dateFormatted] = tuple([text])
 	else: #newPersonDict
 		if sender not in newDict.keys():
 			newDict[sender] = {}
 		if dateFormatted in newDict[sender].keys():
-			currLst = list(newDict[sender][dateFormatted])
-			currLst.append(text)
-			newDict[sender][dateFormatted] = tuple(currLst)
+			if text not in newDict[sender][dateFormatted]:
+				currLst = list(newDict[sender][dateFormatted])
+				currLst.append(text)
+				newDict[sender][dateFormatted] = tuple(currLst)
 		else:
 			newDict[sender][dateFormatted] = tuple([text])
 
