@@ -46,7 +46,8 @@ def parseFBMessages():
 			dateFormatted = datetime.strptime(message['date_time'], '%A, %B %d, %Y at %I:%M%p ')
 			addToNewDict(newPersonDict, dateFormatted, text, sender)
 			addToNewDict(newFullTextDict, dateFormatted, text)
-	
+	if 'y' in input("Enter 'y' if you would like to match duplicate names on Facebook"):
+		matchDuplicates(newPersonDict)
 	mergeAndSortPersonDict(newPersonDict)
 	mergeAndSortFullTextDict(newFullTextDict)
 
@@ -81,6 +82,8 @@ def parseSMS(me):
 			dateFormatted = datetime.strptime(date, '%b %d, %Y %I:%M:%S %p') #"Jul 10, 2016 8:28:10 PM"
 			addToNewDict(newPersonDict, dateFormatted, text, sender)
 			addToNewDict(newFullTextDict, dateFormatted, text)
+	if 'y' in input("Enter 'y' if you would like to match duplicate names from Android SMS"):
+		matchDuplicates(newPersonDict)
 		mergeAndSortPersonDict(newPersonDict)
 		mergeAndSortFullTextDict(newFullTextDict)
 
@@ -132,6 +135,8 @@ def parseAllThreads(folder=None):
 		for f in files:
 			fullpath = os.path.join(root, f)
 			parseThread(me, fullpath)
+	if 'y' in input("Enter 'y' if you would like to match duplicates from iMessage"):
+		matchDuplicates(newPersonDict)
 	mergeAndSortPersonDict(newPersonDict)
 	mergeAndSortFullTextDict(newFullTextDict)
 
@@ -215,6 +220,9 @@ def mergeAndSortPersonDict(newDict):
 			if name not in aliasDict.keys():
 				matchAlias(personDict.keys(), name, newDict)
 			trueName = aliasDict[name]
+			if trueName in aliasDict.keys():
+				trueName = aliasDict[trueName]
+
 		else:
 			trueName = name
 		for date in newDict[name]:
@@ -248,17 +256,15 @@ def mergeAndSortFullTextDict(newDict):
 """
 add to alias dictionary a mapping from each name in otherNames to a name that's in existing names,
 or adds a new name if no good match is found.
-Step 1: compile list of possible matches by using minEditDistance (need to deal with middle names, non-English characters, initials for last names)
+Step 1: compile list of possible matches by using minEditDistance (need to deal with middle names, non-English characters, initials for last names, shortened first names)
 	what to do if there are no good matches? 
-Step 2: Somone is less likely to be a match if the existing name already corresponds to many other names
-Step 3: If there are a few possible matches, match using elements of writing style
+Step 2: If there are a few possible matches, match using elements of writing style
 """
 def matchAliases(existingNames, otherNames, otherNamesDict):
+	CUTOFFSCORE = 2 #play around with this
 	for otherName in otherNames:
 		candidates = possMatches(otherName, existingNames) #list of possible matches (determined by small edit distance)
-		topCandidates = candidates[0:len(candidates)][0]
 		topCandidate, bestScore = candidates[0]
-		CUTOFFSCORE = 2 #play around with this
 		correctMatch = False
 		if bestScore < CUTOFFSCORE:
 			if otherName.isdigit(): #phone number
@@ -290,8 +296,30 @@ def matchAlias(existingNames, otherName, otherNamesDict):
 	matchAliases(existingNames, [otherName], otherNamesDict)
 	return aliasDict[otherName]
 
-def possMatches(name, existingNames, number=5):
-	if name in existingNames:
+def matchDuplicates(newDict):
+	CUTOFFSCORE = 1 #play around with this
+	for name in newDict:
+		if name in aliasDict.values():
+			continue
+		candidates = possMatches(name, newDict.keys(), 3, False) #list of possible matches (determined by small edit distance)
+		correctMatch = False
+		i = 0
+		while not correctMatch and i < len(candidates) and candidates[i][1] <= CUTOFFSCORE:
+			topCandidate = candidates[i][0]
+			if topCandidate != name:
+				correctMatch = True if 'y' in input("Enter 'y' if " + topCandidate + " is a duplicate of " + name + " on the same platform.") else False
+			i += 1
+		if correctMatch:
+			aliasDict[name] = topCandidate
+	return
+
+
+
+
+
+
+def possMatches(name, existingNames, number=5, diffDics = True):
+	if name in existingNames and diffDics:
 		return [(name,0)]
 	similarityScores = {} #existing name -> min edit distance
 	for existingName in existingNames:
@@ -321,7 +349,7 @@ def nameSimilarityScore(w1, w2):
 	allPartScore = 0
 	splitW1 = w1.split(" ")
 	splitW2 = w2.split(" ")
-	if splitW1[0] == splitW2[0]: #first name match
+	if splitW1[0] == splitW2[0] or splitW1[0].startswith(splitW2[0]) or splitW2[0].startswith(splitW1[0]): #first name match, cor one is a prefix of the other
 		if splitW1[len(splitW1)-1] == splitW2[len(splitW2)-1]: #first and last name match
 			return 0
 		else:
@@ -357,45 +385,12 @@ def wordCloud(personStr):
 	# Display the generated image:
 	# the matplotlib way:
 	import matplotlib.pyplot as plt
-	"""
-	plt.imshow(wordcloud)
-	plt.axis("off")
-	"""
 	# take relative word frequencies into account, lower max_font_size
 	wordcloud = WordCloud(max_font_size=40, relative_scaling=.5).generate(text)
 	plt.figure()
 	plt.imshow(wordcloud)
 	plt.axis("off")
 	plt.show()
-
-def topFriends(number):
-	temp = sorted(personDict.keys(), key=lambda x: -len(personDict[x]))
-	i = 0
-	topFriends = []
-	for person in temp:
-		if i < number:
-			if person != me:
-				topFriends.append(person)
-				i += 1
-		else:
-			return topFriends
-			break
-
-def topFriendsMonth(number, month, year): 
-	monthStart = datetime(int(year), int(month), 1)
-	monthEnd = datetime(int(year), int(month), calendar.monthrange(int(year),int(month))[1])
-	temp = sorted(personDict.keys(), key= lambda x: -numMessagesMonth(x, monthStart, monthEnd))
-	
-	i = 0
-	topFriends = []
-	for person in temp:
-		if i < number:
-			if person != me:
-				topFriends.append(person)
-				i += 1
-		else:
-			return topFriends
-			break
 
 
 def plotTopFriends(number = 15):
@@ -462,7 +457,7 @@ def similarityPlot():
 	import matplotlib.pyplot as plt
 	N_DISTINGUISHING_FEATURES = 10
 	tfidf_vectorizer = TfidfVectorizer(min_df=1)
-	names = topFriends(50) + [me]
+	names = friendsAboveMinNumMessages(200) + [me]
 	data = []
 	for i in range(len(names)):
 		data.append(getAllMessagesAsString(names[i]))
@@ -491,6 +486,43 @@ def similarityPlot():
 #=====================================================================================================
 #                                           Helpers/Utilities
 #=====================================================================================================
+def topFriends(number):
+	temp = sorted(personDict.keys(), key=lambda x: -len(personDict[x]))
+	i = 0
+	topFriends = []
+	for person in temp:
+		if i < number:
+			if person != me:
+				topFriends.append(person)
+				i += 1
+		else:
+			return topFriends
+
+def topFriendsMonth(number, month, year): 
+	monthStart = datetime(int(year), int(month), 1)
+	monthEnd = datetime(int(year), int(month), calendar.monthrange(int(year),int(month))[1])
+	temp = sorted(personDict.keys(), key= lambda x: -numMessagesMonth(x, monthStart, monthEnd))
+	
+	i = 0
+	topFriends = []
+	for person in temp:
+		if i < number:
+			if person != me:
+				topFriends.append(person)
+				i += 1
+		else:
+			return topFriends
+
+def friendsAboveMinNumMessages(number = 100):
+	temp = sorted(personDict.keys(), key=lambda x: -len(personDict[x]))
+	topFriends = []
+	for person in temp:
+		if len(personDict[person]) >= number:
+			if person != me:
+				topFriends.append(person)
+		else:
+			return topFriends
+
 def getAllMessagesAsString(personStr):
 	string = ""
 	for messages in personDict[personStr].values():
