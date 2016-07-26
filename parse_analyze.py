@@ -14,6 +14,11 @@ import itertools
 from titlecase import titlecase #for name/alias matching
 from sklearn.metrics.pairwise import cosine_similarity #finding similarity between two texts, requires scipy
 from sklearn.feature_extraction.text import TfidfVectorizer #make tf-idf matrix
+
+from sklearn import manifold
+from sklearn.metrics import euclidean_distances
+from sklearn.decomposition import PCA
+import numpy as np
 #=====================================================================================================
 #                                  Parsing Messages and Contact Info
 #=====================================================================================================
@@ -31,7 +36,6 @@ def parseFBMessages():
 			chat = fb_parser.html_to_py(f)
 			# Dump to json to prove works:
 			fb_parser.py_to_json(chat)
-	#jsonFile = json.loads(open('parser/FB-Message-Parser/messages.json').read())
 	jsonFile = json.loads(open('messages.json').read())
 	newPersonDict = {}
 	newFullTextDict = {}
@@ -416,17 +420,7 @@ def plotTopFriends(number = 15):
 		plt.plot(months, counts, label = friend)
 	plt.legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.)
 	plt.show()
-	"""
-def mostSimilarFriends():
-	pairSimilarity = {} #(friend1, friend2) -> score
-	for friend1 in personDict:
-		for friend2 in personDict:
-			if friend1 != friend2 and (friend2, friend1) not in pairSimilarity.keys():
-				score = writingStyleMatchScore(friend1, friend2)
-				pairSimilarity[(friend1, friend2)] = score
-	sortedByScore = sorted(pairSimilarity.items(), key = lambda x: -x[1])
-	print(sortedByScore[:10])
-	"""
+
 def mostSimilarFriends():
 	return maxPairWritingStyleMatchScore(personDict.keys())
 
@@ -459,6 +453,34 @@ def maxPairWritingStyleMatchScore(people, number = 10):
 				# 	del scoreDict[sortedScores[0][0]]
 				# 	scoreDict[(i,j)] = similarities[j]
 	return [(orderingDict[i], orderingDict[j], score) for (i,j), score in sorted(scoreDict.items(), key = lambda x: -x[1])]
+
+"""
+Takes tf_idf vectors of top friends, reduces the dimensionality while seeking to preserve distances between vectors (MDS)
+identifies the most distinguishing features (PCA), and projects the vectors onto 2D plane to show similarity between friends' word choice.
+"""
+def similarityPlot():
+	import matplotlib.pyplot as plt
+	N_DISTINGUISHING_FEATURES = 10
+	tfidf_vectorizer = TfidfVectorizer(min_df=1)
+	names = topFriends(50) + [me]
+	data = []
+	for i in range(len(names)):
+		data.append(getAllMessagesAsString(names[i]))
+	tfidf_matrix = tfidf_vectorizer.fit_transform(data)
+	nmds = manifold.MDS(metric = True, n_components = N_DISTINGUISHING_FEATURES) 
+	npos = nmds.fit_transform(tfidf_matrix.toarray())
+	clf = PCA(n_components=N_DISTINGUISHING_FEATURES)
+	npos = clf.fit_transform(npos)
+	plt.scatter(npos[:, 0], npos[:, 1], marker = 'o', c = 'b', cmap = plt.get_cmap('Spectral')) #change colors
+	for name, x, y in zip(names, npos[:, 0], npos[:, 1]):
+	    plt.annotate(
+	        name, 
+	        xy = (x, y), xytext = (-20, 20),
+	        textcoords = 'offset points', ha = 'right', va = 'bottom',
+	        bbox = dict(boxstyle = 'round,pad=0.5', fc = 'yellow', alpha = 0.5),
+	        arrowprops = dict(arrowstyle = '->', connectionstyle = 'arc3,rad=0'))
+
+	plt.show()
 
 #make messages searchable
 #most similar friends in terms of words used
