@@ -1,0 +1,8 @@
+numpy==1.11.0
+Unidecode==0.4.19
+wordcloud==1.2.1
+beautifulsoup4==4.5.0
+matplotlib==2.0.0b3
+nltk==3.2.1
+scikit_learn==0.17.1
+titlecase==0.8.1
