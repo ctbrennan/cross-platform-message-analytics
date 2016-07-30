@@ -19,6 +19,7 @@ from sklearn import manifold
 from sklearn.metrics import euclidean_distances
 from sklearn.decomposition import PCA
 import numpy as np
+
 #=====================================================================================================
 #                                  Parsing Messages and Contact Info
 #=====================================================================================================
@@ -74,16 +75,15 @@ def parseSMS(me):
 				if sender not in newNames:
 					newNames.append(sender)
 			else:
-				sender = phoneNumber
-				if sender not in notFound:
-					notFound.append(sender)		
+				continue #don't add plain phone numbers
+				
 			date = message.attrib['time']
 			text = message.attrib['body']
 			dateFormatted = datetime.strptime(date, '%b %d, %Y %I:%M:%S %p') #"Jul 10, 2016 8:28:10 PM"
 			addToNewDict(newPersonDict, dateFormatted, text, sender)
 			addToNewDict(newFullTextDict, dateFormatted, text)
-	if 'y' in input("Enter 'y' if you would like to match duplicate names from Android SMS"):
-		matchDuplicates(newPersonDict)
+		if 'y' in input("Enter 'y' if you would like to match duplicate names from Android SMS"):
+			matchDuplicates(newPersonDict)
 		mergeAndSortPersonDict(newPersonDict)
 		mergeAndSortFullTextDict(newFullTextDict)
 
@@ -280,10 +280,10 @@ def matchAliases(existingNames, otherNames, otherNamesDict):
 				i = 0
 				while not correctMatch and i < len(topCandidates):
 					topCandidate = topCandidates[i]
-					correctMatch = True if 'y' in input("Enter 'y' if " + otherName + " should be matched with " + topCandidate) else False
+					correctMatch = True if 'y' in input("Enter 'y' if " + otherName + " should be matched with " + topCandidate + ": ") else False
 					i += 1	
 			else:
-				correctMatch = True if 'y' in input("Enter 'y' if " + otherName + " should be matched with " + topCandidate) else False
+				correctMatch = True if 'y' in input("Enter 'y' if " + otherName + " should be matched with " + topCandidate + ": ") else False
 			if correctMatch:
 				aliasDict[otherName] = topCandidate
 			else:
@@ -297,6 +297,7 @@ def matchAlias(existingNames, otherName, otherNamesDict):
 	return aliasDict[otherName]
 
 def matchDuplicates(newDict):
+	tried = {}
 	CUTOFFSCORE = 1 #play around with this
 	for name in newDict:
 		if name in aliasDict.values():
@@ -306,8 +307,15 @@ def matchDuplicates(newDict):
 		i = 0
 		while not correctMatch and i < len(candidates) and candidates[i][1] <= CUTOFFSCORE:
 			topCandidate = candidates[i][0]
+			pair1 = (topCandidate, name)
+			if pair1 in tried.keys():
+				i += 1
+				continue
+			pair2 = (name, topCandidate)
+			tried[pair1] = True
+			tried[pair2] = True
 			if topCandidate != name:
-				correctMatch = True if 'y' in input("Enter 'y' if " + topCandidate + " is a duplicate of " + name + " on the same platform.") else False
+				correctMatch = True if 'y' in input("Enter 'y' if " + topCandidate + " is a duplicate of " + name + " on the same platform: ") else False
 			i += 1
 		if correctMatch:
 			aliasDict[name] = topCandidate
@@ -376,8 +384,8 @@ def writingStyleMatchScore(otherName, otherNamesDict, possibleExistingMatch):
 #                                        Analytics/Fun
 #=================================================== ==================================================
 
-def wordCloud(personStr):
-	text = getAllMessagesAsString(personStr)
+def wordCloud(person):
+	text = getAllMessagesAsString(person)
 
 	# Generate a word cloud image
 	wordcloud = WordCloud().generate(text)
@@ -391,6 +399,23 @@ def wordCloud(personStr):
 	plt.imshow(wordcloud)
 	plt.axis("off")
 	plt.show()
+
+def mostCommonNGrams(n, number):
+	"""
+	get common phrases of length n
+	"""
+	from nltk import ngrams
+	wordList = fullWordList()
+	grams = list(ngrams(wordList, n))
+	counts = {}
+	for gram in grams:
+		if gram not in counts:
+			counts[gram] = 1
+		else:
+			counts[gram] += 1
+	return sorted(counts.keys(), key = lambda x: -counts[x])[:number]
+
+
 
 
 def plotTopFriends(number = 15):
@@ -480,6 +505,8 @@ def similarityPlot():
 #make messages searchable
 #most similar friends in terms of words used
 #make function that makes huge png of all messages (maybe in shape of picture)
+#phraseCloud
+#graph slang usage over time
 
 
 	
@@ -567,7 +594,7 @@ def fullWordList():
 				fullWordList.append(word)
 	return fullWordList
 
-def fullWordList(name, sourceDict=None):
+def fullWordListPerson(name, sourceDict=None):
 	if not sourceDict:
 		sourceDict = personDict[name]
 	fullWordList = []
