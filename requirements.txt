@@ -6,3 +6,4 @@ matplotlib==2.0.0b3
 nltk==3.2.1
 scikit_learn==0.17.1
 titlecase==0.8.1
+twython==3.4.0

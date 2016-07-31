@@ -19,7 +19,8 @@ from sklearn import manifold
 from sklearn.metrics import euclidean_distances
 from sklearn.decomposition import PCA
 import numpy as np
-
+import re #remove emojis
+import twython
 #=====================================================================================================
 #                                  Parsing Messages and Contact Info
 #=====================================================================================================
@@ -124,7 +125,7 @@ def parseAllThreads(folder=None):
 		wantsToParse = True if 'y' in input("Enter 'y' if you would like to parse your iMessageDatabase (please make a backup first)") else False
 		if not wantsToParse:
 			return
-		folder = folder if folder else "./chatparsed2/threads/"
+		folder = folder if folder else "./chatparsed/threads/"
 		for file in os.listdir(os.getcwd()): #for file in working directory
 			if file.endswith(".db"):
 				sqlPath = file
@@ -154,11 +155,14 @@ def parseVCF():
 				index = line.find('pref:')
 				number = line[index + 5:]
 				if index == -1:
-					index = number.find(":")
+					index = numer.find(":")
 					number = number[index + 1:]
 				number = number.rstrip()
 				number = formatPhoneNumber(number) #trying this out
-				vCardDict[number] = currName
+				if currName:
+					vCardDict[number] = currName
+				else: #currName is still None, haven't found a name yet
+					vCardDict[number] = number
 	def parseVCF2():
 		for line in vcfFile:
 			if line.startswith('FN'):
@@ -168,7 +172,12 @@ def parseVCF():
 				number = line[index+1:]
 				number = number.rstrip()
 				number = formatPhoneNumber(number) #trying this out
-				vCardDict[number] = currName
+				if currName:
+					vCardDict[number] = currName
+				else:#currName is still None, haven't found a name yet
+					vCardDict[number] = number
+
+	currName = None #necessary in case first contact has no name associated with it
 	vcfFile = open('allme.vcf', 'r')#need to change to below, eventually
 	"""
 	#only works if there's only one .vcf file		
@@ -400,12 +409,16 @@ def wordCloud(person):
 	plt.axis("off")
 	plt.show()
 
-def mostCommonNGrams(n, number):
+
+def mostCommonNGrams(n, number, person = None):
 	"""
 	get common phrases of length n
 	"""
 	from nltk import ngrams
-	wordList = fullWordList()
+	if person:
+		wordList = fullWordListPerson(person)
+	else:
+		wordList = fullWordList()
 	grams = list(ngrams(wordList, n))
 	counts = {}
 	for gram in grams:
@@ -507,7 +520,6 @@ def similarityPlot():
 #make function that makes huge png of all messages (maybe in shape of picture)
 #phraseCloud
 #graph slang usage over time
-
 
 	
 #=====================================================================================================
@@ -617,6 +629,42 @@ def fullWordListPerson(name, sourceDict=None):
 					fullWordList.append(word)
 	return fullWordList
 
+def slangList():
+	from nltk.corpus import words
+	wordSet = set(words.words())
+	lst = [slang for slang in fullWordList() if slang not in wordSet and isSlang(slang) and slang[:len(slang) - 1] not in wordSet]
+	return lst
+def isSlang(word):
+	wordExceptLast = word[:len(slang) - 1]
+	if isProperNoun(word) or isProperNoun(wordExceptLast):
+		return False
+	if 'www' in word or "'" in word:
+		return False
+	return True
+def isProperNoun(word):
+	return titlecase(word) == word 
+# def q():
+# 	from nltk.metrics.association import QuadgramAssocMeasures
+# 	quadgram_measures = QuadgramAssocMeasures()
+# 	finder = QuadgramCollocationFinder.from_words(fullWordList())
+# 	finder.nbest(quadgram_measures.pmi, 10)  # doctest: +NORMALIZE_WHITESPACE
+def personAvgSentiment(person):
+	from nltk.sentiment.vader import SentimentIntensityAnalyzer
+	comp = 0
+	sid = SentimentIntensityAnalyzer()
+	msgLst = fullMessageList(person)
+	for message in msgLst:
+		sentimentDict = sid.polarity_scores(message)
+		comp += sentimentDict['compound']
+	return comp/len(msgLst)
+
+
+def messageSentiment(message):
+	from nltk.sentiment.vader import SentimentIntensityAnalyzer
+	#may need to download vader_lexicon after calling nltk.download()
+	sid = SentimentIntensityAnalyzer()
+	return sid.polarity_scores(message)
+
 """
 908-872-6993
 +13106996932
@@ -648,6 +696,13 @@ def areEnglishCharacters(s):
 	if not s:
 		return True
 	try:
+		emoji_pattern = re.compile("["
+        u"\U0001F600-\U0001F64F"  # emoticons
+        u"\U0001F300-\U0001F5FF"  # symbols & pictographs
+        u"\U0001F680-\U0001F6FF"  # transport & map symbols
+        u"\U0001F1E0-\U0001F1FF"  # flags (iOS)
+                           "]+", flags=re.UNICODE) #http://stackoverflow.com/a/33417311
+		s = emoji_pattern.sub(r'', s)
 		s.encode('ascii')
 	except UnicodeEncodeError:
 		return False
