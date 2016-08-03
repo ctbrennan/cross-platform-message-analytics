@@ -29,6 +29,8 @@ personDict = {} #name -> dateTime -> tuple of messages
 fullTextDict = {} #dateTime -> tuple of everyone's messages
 vCardDict = {} #phone number/email -> name
 aliasDict = {} #alias1 -> alias2, alias2 -> alias1
+STOPWORDS = set([x.strip() for x in open(os.path.join(os.getcwd(),'stopwords.txt')).read().split('\n')])
+STOPWORDS.add('none')
 """
 For parsing all Facebook messages into dictionaries
 """
@@ -299,7 +301,6 @@ def matchAliases(existingNames, otherNames, otherNamesDict):
 				aliasDict[otherName] = titlecase(otherName)
 		else:
 			aliasDict[otherName] = titlecase(otherName)
-		#print(otherName, candidates)
 
 def matchAlias(existingNames, otherName, otherNamesDict):
 	matchAliases(existingNames, [otherName], otherNamesDict)
@@ -329,11 +330,6 @@ def matchDuplicates(newDict):
 		if correctMatch:
 			aliasDict[name] = topCandidate
 	return
-
-
-
-
-
 
 def possMatches(name, existingNames, number=5, diffDics = True):
 	if name in existingNames and diffDics:
@@ -409,7 +405,6 @@ def wordCloud(person):
 	plt.axis("off")
 	plt.show()
 
-
 def mostCommonNGrams(n, number, person = None):
 	"""
 	get common phrases of length n
@@ -427,9 +422,6 @@ def mostCommonNGrams(n, number, person = None):
 		else:
 			counts[gram] += 1
 	return sorted(counts.keys(), key = lambda x: -counts[x])[:number]
-
-
-
 
 def plotTopFriends(number = 15):
 	import matplotlib.pyplot as plt
@@ -474,7 +466,6 @@ def maxPairWritingStyleMatchScore(people, number = 10):
 		for j in range(tfidf_matrix.shape[0]):
 			if i < j and len(personDict[orderingDict[i]]) > 100 and len(personDict[orderingDict[j]]) > 100: #minimum of 100 messages for both people
 				score = cosine_similarity(tfidf_matrix[i:i+1], tfidf_matrix[j:j+1])[0][0]
-				#print(similarity)
 				if len(scoreDict) <= number: #number of pairs
 					scoreDict[(i,j)] = score
 				else:
@@ -512,9 +503,55 @@ def similarityPlot():
 	        textcoords = 'offset points', ha = 'right', va = 'bottom',
 	        bbox = dict(boxstyle = 'round,pad=0.5', fc = 'yellow', alpha = 0.5),
 	        arrowprops = dict(arrowstyle = '->', connectionstyle = 'arc3,rad=0'))
-
 	plt.show()
 
+def similarityPlotNoMDS():
+	import matplotlib.pyplot as plt
+	from matplotlib import rcParams
+	N_DISTINGUISHING_FEATURES = 10
+	tfidf_vectorizer = TfidfVectorizer(min_df=1)
+	names = friendsAboveMinNumMessages(200) + [me]
+	data = []
+	words = [] #ordering of words in tf_idf matrix
+	wordsSet = set() #for faster lookup
+	nameSet = set()
+	for person in personDict:
+		for name in person.split():
+			nameSet.add(name)
+			nameSet.add(name.lower())
+	for i in range(len(names)):
+		data.append(getAllMessagesAsString(names[i], False))
+	tfidf_matrix = tfidf_vectorizer.fit_transform(data)
+	featureNames = tfidf_vectorizer.get_feature_names()
+	tfidf_arr = tfidf_matrix.toarray()
+	for j in range(len(tfidf_arr[0])):
+		word = tfidf_arr[0][j]
+		if word not in wordsSet:
+			words.append(word)
+			wordsSet.add(j)
+	#nmds = manifold.MDS(metric = True, n_components = N_DISTINGUISHING_FEATURES) 
+	#npos = nmds.fit_transform(tfidf_matrix.toarray())
+	clf = PCA(n_components=2)
+	npos = clf.fit_transform(tfidf_arr)
+	plt.scatter(npos[:, 0], npos[:, 1], marker = 'o', c = 'b', cmap = plt.get_cmap('Spectral')) #change colors
+	for name, x, y in zip(names, npos[:, 0], npos[:, 1]):
+	    plt.annotate(
+	        name, 
+	        xy = (x, y), xytext = (-20, 20),
+	        textcoords = 'offset points', ha = 'right', va = 'bottom',
+	        bbox = dict(boxstyle = 'round,pad=0.5', fc = 'yellow', alpha = 0.5),
+	        arrowprops = dict(arrowstyle = '->', connectionstyle = 'arc3,rad=0'))
+	xAxis = [featureNames[i] for i in np.argpartition(np.absolute(clf.components_[0]), -50)[-50:] if featureNames[i] not in nameSet]
+	yAxis = [featureNames[i] for i in np.argpartition(np.absolute(clf.components_[1]), -50)[-50:] if featureNames[i] not in nameSet]
+	for i in range(1, max(len(xAxis), len(yAxis)) ):
+		if i % 20 == 0 and i < len(xAxis):
+			xAxis[i] += "\n"
+		if i % 15 == 0 and i < len(yAxis):
+			yAxis[i] += "\n"
+	plt.xlabel("Most influential words along x axis:\n" + ", ".join(xAxis), fontsize=18)
+	plt.ylabel("Most influential words along y axis:\n" + ", ".join(yAxis), fontsize=18)
+	rcParams.update({'figure.autolayout': True})
+	plt.show()
 #make messages searchable
 #most similar friends in terms of words used
 #make function that makes huge png of all messages (maybe in shape of picture)
@@ -562,12 +599,18 @@ def friendsAboveMinNumMessages(number = 100):
 		else:
 			return topFriends
 
-def getAllMessagesAsString(personStr):
+def getAllMessagesAsString(personStr, includeSW = True):
 	string = ""
 	for messages in personDict[personStr].values():
 		for message in messages:
+			if not includeSW:
+				messageWords = message.split()
+				if type(messageWords) != None and len(messageWords) > 0:
+					afterRemoval = [word for word in messageWords if word.lower() not in STOPWORDS]
+					message = ' '.join(afterRemoval)
 			string += message + " "
 	return string
+
 def numMessagesMonth(person, monthStart, monthEnd):
 	count = 0
 	for datetime in personDict[person]:
@@ -592,6 +635,17 @@ def fullMessageList(name, sourceDict=None):
 			else:
 				fullMessageList.append(message)
 	return fullMessageList
+def fullMessageListMonth(name, month, year):
+	messageLst = []
+	monthStart = datetime(int(year), int(month), 1)
+	monthEnd = datetime(int(year), int(month), calendar.monthrange(int(year),int(month))[1])
+	for datetime in personDict[person]:
+		if datetime >= monthStart and datetime <= monthEnd:
+			for message in personDict[datetime]:
+				messageLst.append(message)
+	return messageLst
+			
+
 
 def fullWordList():
 	fullWordList = []
@@ -648,16 +702,18 @@ def isProperNoun(word):
 # 	quadgram_measures = QuadgramAssocMeasures()
 # 	finder = QuadgramCollocationFinder.from_words(fullWordList())
 # 	finder.nbest(quadgram_measures.pmi, 10)  # doctest: +NORMALIZE_WHITESPACE
-def personAvgSentiment(person):
+def personAvgSentiment(person, month = None):
 	from nltk.sentiment.vader import SentimentIntensityAnalyzer
 	comp = 0
 	sid = SentimentIntensityAnalyzer()
-	msgLst = fullMessageList(person)
+	if month:
+		msgLst = fullMessageListMonth()
+	else:	
+		msgLst = fullMessageList(person)
 	for message in msgLst:
 		sentimentDict = sid.polarity_scores(message)
 		comp += sentimentDict['compound']
 	return comp/len(msgLst)
-
 
 def messageSentiment(message):
 	from nltk.sentiment.vader import SentimentIntensityAnalyzer
