@@ -34,7 +34,7 @@ STOPWORDS.add('none')
 """
 For parsing all Facebook messages into dictionaries
 """
-def parseFBMessages():
+def parseFBMessages(confident):
 	if not os.path.isfile('messages.json') :
 		with open('messages.htm', "r") as f:
 			chat = fb_parser.html_to_py(f)
@@ -52,13 +52,13 @@ def parseFBMessages():
 			addToNewDict(newFullTextDict, dateFormatted, text)
 	if 'y' in input("Enter 'y' if you would like to match duplicate names on Facebook"):
 		matchDuplicates(newPersonDict)
-	mergeAndSortPersonDict(newPersonDict)
+	mergeAndSortPersonDict(newPersonDict, confident)
 	mergeAndSortFullTextDict(newFullTextDict)
 
 """
 Parsing .xml file containing all sms ("Super Backup" for Android)
 """
-def parseSMS(me):
+def parseSMS(me, confident):
 	def parseSuperBackup():
 		tree = ET.parse('allsms.xml') #fix this later
 		root = tree.getroot()
@@ -87,7 +87,7 @@ def parseSMS(me):
 			addToNewDict(newFullTextDict, dateFormatted, text)
 		if 'y' in input("Enter 'y' if you would like to match duplicate names from Android SMS"):
 			matchDuplicates(newPersonDict)
-		mergeAndSortPersonDict(newPersonDict)
+		mergeAndSortPersonDict(newPersonDict, confident)
 		mergeAndSortFullTextDict(newFullTextDict)
 
 	parseVCF()
@@ -145,7 +145,7 @@ def parseAllThreads(folder=None):
 
 """
 Parses file of all vcard data into dictionary mapping phone number/email to name.
-All vcards must be in same file.
+All vcards must be in same file. Handles VCF versions 2.x and 3.x
 """
 def parseVCF():
 	global vCardDict
@@ -196,6 +196,9 @@ def parseVCF():
 				parseVCF3()
 			else:
 				parseVCF2()
+"""
+Adds a new message entry to the new dictionary. Handles both fullTextDict and personDict.
+"""
 def addToNewDict(newDict, dateFormatted, text, sender = None):
 	if not areEnglishCharacters(sender):
 		return
@@ -218,7 +221,10 @@ def addToNewDict(newDict, dateFormatted, text, sender = None):
 		else:
 			newDict[sender][dateFormatted] = tuple([text])
 
-def mergeAndSortPersonDict(newDict):
+"""
+Merges a newDict, which is newly parsed from some platform, with the dictionary that already exists
+"""
+def mergeAndSortPersonDict(newDict, confident):
 	global personDict
 	if personDict == {}:
 		personDict = newDict
@@ -229,7 +235,7 @@ def mergeAndSortPersonDict(newDict):
 	for name in newDict:
 		if name not in personDict.keys():
 			if name not in aliasDict.keys():
-				matchAlias(personDict.keys(), name, newDict)
+				matchAlias(personDict.keys(), name, newDict, confident)
 			trueName = aliasDict[name]
 			if trueName in aliasDict.keys():
 				trueName = aliasDict[trueName]
@@ -259,8 +265,6 @@ def mergeAndSortFullTextDict(newDict):
 	fullTextDict = OrderedDict(sorted(fullTextDict.items(), key=lambda t: t[0]))
 
 
-
-
 #=====================================================================================================
 #                                       Combining Contacts
 #=====================================================================================================
@@ -268,16 +272,15 @@ def mergeAndSortFullTextDict(newDict):
 add to alias dictionary a mapping from each name in otherNames to a name that's in existing names,
 or adds a new name if no good match is found.
 Step 1: compile list of possible matches by using minEditDistance (need to deal with middle names, non-English characters, initials for last names, shortened first names)
-	what to do if there are no good matches? 
-Step 2: If there are a few possible matches, match using elements of writing style
+Step 2: If there are a few possible matches, sort possible matches using elements of writing style, and ask user to confirm
 """
-def matchAliases(existingNames, otherNames, otherNamesDict):
+def matchAliases(existingNames, otherNames, otherNamesDict, confident):
 	CUTOFFSCORE = 2 #play around with this
 	for otherName in otherNames:
 		candidates = possMatches(otherName, existingNames) #list of possible matches (determined by small edit distance)
 		topCandidate, bestScore = candidates[0]
 		correctMatch = False
-		if bestScore < CUTOFFSCORE:
+		if not confident and bestScore < CUTOFFSCORE:
 			if otherName.isdigit(): #phone number
 				aliasDict[otherName] = otherName
 			#if candidates[1][1] >= bestScore - 1: #multiple best matches within 1 of eachother
@@ -299,11 +302,13 @@ def matchAliases(existingNames, otherNames, otherNamesDict):
 				aliasDict[otherName] = topCandidate
 			else:
 				aliasDict[otherName] = titlecase(otherName)
+		elif confident:
+			aliasDict[otherName] = topCandidate
 		else:
 			aliasDict[otherName] = titlecase(otherName)
 
-def matchAlias(existingNames, otherName, otherNamesDict):
-	matchAliases(existingNames, [otherName], otherNamesDict)
+def matchAlias(existingNames, otherName, otherNamesDict, confident):
+	matchAliases(existingNames, [otherName], otherNamesDict, confident)
 	return aliasDict[otherName]
 
 def matchDuplicates(newDict):
@@ -338,7 +343,6 @@ def possMatches(name, existingNames, number=5, diffDics = True):
 	for existingName in existingNames:
 		score = nameSimilarityScore(name, existingName)
 		similarityScores[existingName] = score
-	#return sorted(editDistances.keys(), key = lambda x: editDistances[x])[:5] #?
 	sortedByScore = sorted(similarityScores.items(), key = lambda x: x[1])[:number] #?
 	return sortedByScore
 
@@ -374,7 +378,9 @@ def nameSimilarityScore(w1, w2):
 	w1 = " ".join(splitW1)
 	w2 = " ".join(splitW2)
 	return minEditDistance(w1, w2)
-
+"""
+computes the cosine similarity of the tfidf vectors formed from all the words the unknown person and possible match have typed
+"""
 def writingStyleMatchScore(otherName, otherNamesDict, possibleExistingMatch):
 	#http://blog.christianperone.com/2013/09/machine-learning-cosine-similarity-for-vector-space-models-part-iii/
 	existingNameText = " ".join(fullMessageList(possibleExistingMatch))
@@ -382,7 +388,6 @@ def writingStyleMatchScore(otherName, otherNamesDict, possibleExistingMatch):
 	tfidf_vectorizer = TfidfVectorizer(min_df=1)
 	tfidf_matrix = tfidf_vectorizer.fit_transform(tuple([existingNameText, otherNameText]))
 	similarity = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:])[0][0]
-	#print(otherName, possibleExistingMatch, similarity)
 	return similarity
 
 #=====================================================================================================
@@ -446,6 +451,29 @@ def plotTopFriends(number = 15):
 	plt.legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.)
 	plt.show()
 
+def plotFriendSentiment(number = 15):
+	import matplotlib.pyplot as plt
+	earliestDateTime = min(fullTextDict.keys())
+	earliestYear = earliestDateTime.year
+	lastDateTime = max(fullTextDict.keys())
+	lastYear = lastDateTime.year
+	sentiments = {} #key = person, value = [month1sent, month2sent, ...]
+	topFriendsList = topFriends(number)
+	for friend in topFriendsList:
+		sentiments[friend] = []
+	for year in range(earliestYear, lastYear+1):
+		for month in range(1, 13):
+				monthStart = datetime(int(year), int(month), 1)
+				monthEnd = datetime(int(year), int(month), calendar.monthrange(int(year),int(month))[1])
+				for friend in topFriendsList:
+					sentiments[friend].append((monthStart, personAvgSentiment(friend, month, year)))
+	for friend, sentTups in sorted(sentiments.items(), key= lambda x: -sum([sent for month, sent in x[1]])):
+		sents = [sent for (monthStart, sent) in sentTups]
+		months = [monthStart for (monthStart, sent) in sentTups]
+		plt.plot(months, sents, label = friend)
+	plt.legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.)
+	plt.show()
+
 def mostSimilarFriends():
 	return maxPairWritingStyleMatchScore(personDict.keys())
 
@@ -479,36 +507,12 @@ def maxPairWritingStyleMatchScore(people, number = 10):
 	return [(orderingDict[i], orderingDict[j], score) for (i,j), score in sorted(scoreDict.items(), key = lambda x: -x[1])]
 
 """
-Takes tf_idf vectors of top friends, reduces the dimensionality while seeking to preserve distances between vectors (MDS)
-identifies the most distinguishing features (PCA), and projects the vectors onto 2D plane to show similarity between friends' word choice.
+Takes tf_idf vectors of top friends, identifies the most distinguishing features (PCA), and reduces the dimensionality while seeking to preserve distances 
+between vectors, and projects the vectors onto 2D plane to show similarity between friends' word choice.
 """
 def similarityPlot():
 	import matplotlib.pyplot as plt
-	N_DISTINGUISHING_FEATURES = 10
-	tfidf_vectorizer = TfidfVectorizer(min_df=1)
-	names = friendsAboveMinNumMessages(200) + [me]
-	data = []
-	for i in range(len(names)):
-		data.append(getAllMessagesAsString(names[i]))
-	tfidf_matrix = tfidf_vectorizer.fit_transform(data)
-	nmds = manifold.MDS(metric = True, n_components = N_DISTINGUISHING_FEATURES) 
-	npos = nmds.fit_transform(tfidf_matrix.toarray())
-	clf = PCA(n_components=N_DISTINGUISHING_FEATURES)
-	npos = clf.fit_transform(npos)
-	plt.scatter(npos[:, 0], npos[:, 1], marker = 'o', c = 'b', cmap = plt.get_cmap('Spectral')) #change colors
-	for name, x, y in zip(names, npos[:, 0], npos[:, 1]):
-	    plt.annotate(
-	        name, 
-	        xy = (x, y), xytext = (-20, 20),
-	        textcoords = 'offset points', ha = 'right', va = 'bottom',
-	        bbox = dict(boxstyle = 'round,pad=0.5', fc = 'yellow', alpha = 0.5),
-	        arrowprops = dict(arrowstyle = '->', connectionstyle = 'arc3,rad=0'))
-	plt.show()
-
-def similarityPlotNoMDS():
-	import matplotlib.pyplot as plt
 	from matplotlib import rcParams
-	N_DISTINGUISHING_FEATURES = 10
 	tfidf_vectorizer = TfidfVectorizer(min_df=1)
 	names = friendsAboveMinNumMessages(200) + [me]
 	data = []
@@ -535,22 +539,145 @@ def similarityPlotNoMDS():
 	npos = clf.fit_transform(tfidf_arr)
 	plt.scatter(npos[:, 0], npos[:, 1], marker = 'o', c = 'b', cmap = plt.get_cmap('Spectral')) #change colors
 	for name, x, y in zip(names, npos[:, 0], npos[:, 1]):
-	    plt.annotate(
-	        name, 
-	        xy = (x, y), xytext = (-20, 20),
-	        textcoords = 'offset points', ha = 'right', va = 'bottom',
-	        bbox = dict(boxstyle = 'round,pad=0.5', fc = 'yellow', alpha = 0.5),
-	        arrowprops = dict(arrowstyle = '->', connectionstyle = 'arc3,rad=0'))
+		plt.annotate(
+			name, 
+			xy = (x, y), xytext = (-20, 20),
+			textcoords = 'offset points', ha = 'right', va = 'bottom',
+			bbox = dict(boxstyle = 'round,pad=0.5', fc = 'yellow', alpha = 0.5),
+			arrowprops = dict(arrowstyle = '->', connectionstyle = 'arc3,rad=0'))
+	fig, ax = plt.subplots()
+	ax2 = ax.twinx()
+	xAxisP = [featureNames[i] for i in np.argpartition(clf.components_[0], -50)[-50:] if featureNames[i] not in nameSet]
+	yAxisP = [featureNames[i] for i in np.argpartition(clf.components_[1], -50)[-50:] if featureNames[i] not in nameSet]
+	xAxisN = [featureNames[i] for i in np.argpartition(-clf.components_[0], -50)[-50:] if featureNames[i] not in nameSet]
+	yAxisN = [featureNames[i] for i in np.argpartition(-clf.components_[1], -50)[-50:] if featureNames[i] not in nameSet]
+	ax.set_xlabel("Most Postively influential words along x axis:\n" + ", ".join(xAxisP), fontsize=18)
+	ax.set_ylabel("Most Postively influential words along y axis:\n" + ", ".join(yAxisP), fontsize=18)
+	ax2.set_xlabel("Most Negatively influential words along x axis:\n" + ", ".join(xAxisN), fontsize=18)
+	ax2.set_ylabel("Most Negatively influential words along y axis:\n" + ", ".join(yAxisN), fontsize=18)
+	# xAxis = [featureNames[i] for i in np.argpartition(np.absolute(clf.components_[0]), -50)[-50:] if featureNames[i] not in nameSet]
+	# yAxis = [featureNames[i] for i in np.argpartition(np.absolute(clf.components_[1]), -50)[-50:] if featureNames[i] not in nameSet]
+	# for i in range(1, max(len(xAxis), len(yAxis)) ):
+	# 	if i % 20 == 0 and i < len(xAxis):
+	# 		xAxis[i] += "\n"
+	# 	if i % 15 == 0 and i < len(yAxis):
+	# 		yAxis[i] += "\n"
+	# plt.xlabel("Most influential words along x axis:\n" + ", ".join(xAxis), fontsize=18)
+	# plt.ylabel("Most influential words along y axis:\n" + ", ".join(yAxis), fontsize=18)
+	rcParams.update({'figure.autolayout': True})
+	plt.suptitle("Word-Usage Similarity Scatterplot", fontsize = 24, fontweight = 'bold')
+	plt.show()
+
+def similarityPlot3():
+	import matplotlib.pyplot as plt
+	from matplotlib import rcParams
+	from mpl_toolkits.mplot3d import Axes3D
+	from mpl_toolkits.mplot3d import proj3d
+	tfidf_vectorizer = TfidfVectorizer(min_df=1)
+	names = friendsAboveMinNumMessages(200) + [me]
+	data = []
+	words = [] #ordering of words in tf_idf matrix
+	wordsSet = set() #for faster lookup
+	nameSet = set()
+	for person in personDict:
+		for name in person.split():
+			nameSet.add(name)
+			nameSet.add(name.lower())
+	for i in range(len(names)):
+		data.append(getAllMessagesAsString(names[i], False))
+	tfidf_matrix = tfidf_vectorizer.fit_transform(data)
+	featureNames = tfidf_vectorizer.get_feature_names()
+	tfidf_arr = tfidf_matrix.toarray()
+	for j in range(len(tfidf_arr[0])):
+		word = tfidf_arr[0][j]
+		if word not in wordsSet:
+			words.append(word)
+			wordsSet.add(j)
+	clf = PCA(n_components=3)
+	npos = clf.fit_transform(tfidf_arr)
+	visualize3DData(npos, clf, featureNames)
+
+def visualize3DData (X, clf, featureNames):
+	"""Visualize data in 3d plot with popover next to mouse position.
+
+	Args:
+		X (np.array) - array of points, of shape (numPoints, 3)
+	Returns:
+		None
+	"""
+	import matplotlib.pyplot as plt, numpy as np
+	from mpl_toolkits.mplot3d import proj3d
+	fig = plt.figure(figsize = (16,10))
+	ax = fig.add_subplot(111, projection = '3d')
+	ax.scatter(X[:, 0], X[:, 1], X[:, 2], depthshade = False, picker = True)
+	names = friendsAboveMinNumMessages(200) + [me]
+	data = []
+	words = [] #ordering of words in tf_idf matrix
+	wordsSet = set() #for faster lookup
+	nameSet = set()
+	for person in personDict:
+		for name in person.split():
+			nameSet.add(name)
+			nameSet.add(name.lower())
 	xAxis = [featureNames[i] for i in np.argpartition(np.absolute(clf.components_[0]), -50)[-50:] if featureNames[i] not in nameSet]
 	yAxis = [featureNames[i] for i in np.argpartition(np.absolute(clf.components_[1]), -50)[-50:] if featureNames[i] not in nameSet]
-	for i in range(1, max(len(xAxis), len(yAxis)) ):
-		if i % 20 == 0 and i < len(xAxis):
-			xAxis[i] += "\n"
-		if i % 15 == 0 and i < len(yAxis):
-			yAxis[i] += "\n"
-	plt.xlabel("Most influential words along x axis:\n" + ", ".join(xAxis), fontsize=18)
-	plt.ylabel("Most influential words along y axis:\n" + ", ".join(yAxis), fontsize=18)
-	rcParams.update({'figure.autolayout': True})
+	zAxis = [featureNames[i] for i in np.argpartition(np.absolute(clf.components_[2]), -50)[-50:] if featureNames[i] not in nameSet]
+	ax.set_xlabel("Most influential words along x axis:\n" + ", ".join(xAxis), fontsize=18)
+	ax.set_ylabel("Most influential words along y axis:\n" + ", ".join(yAxis), fontsize=18)
+	ax.set_zlabel("Most influential words along z axis:\n" + ", ".join(zAxis), fontsize=18)
+	def distance(point, event):
+		"""Return distance between mouse position and given data point
+		Args:
+			point (np.array): np.array of shape (3,), with x,y,z in data coords
+			event (MouseEvent): mouse event (which contains mouse position in .x and .xdata)
+		Returns:
+			distance (np.float64): distance (in screen coords) between mouse pos and data point
+		"""
+		assert point.shape == (3,), "distance: point.shape is wrong: %s, must be (3,)" % point.shape
+		# Project 3d data space to 2d data space
+		x2, y2, _ = proj3d.proj_transform(point[0], point[1], point[2], plt.gca().get_proj())
+		# Convert 2d data space to 2d screen space
+		x3, y3 = ax.transData.transform((x2, y2))
+		return np.sqrt ((x3 - event.x)**2 + (y3 - event.y)**2)
+	def calcClosestDatapoint(X, event):
+		""""Calculate which data point is closest to the mouse position.
+
+		Args:
+			X (np.array) - array of points, of shape (numPoints, 3)
+			event (MouseEvent) - mouse event (containing mouse position)
+		Returns:
+			smallestIndex (int) - the index (into the array of points X) of the element closest to the mouse position
+		"""
+		distances = [distance (X[i, 0:3], event) for i in range(X.shape[0])]
+		return np.argmin(distances)
+	labelDic = {}
+	def annotatePlot(X, index):
+		"""Create popover label in 3d chart
+
+		Args:
+			X (np.array) - array of points, of shape (numPoints, 3)
+			index (int) - index (into points array X) of item which should be printed
+		Returns:
+			None
+		"""
+		# If we have previously displayed another label, remove it first
+		if hasattr(annotatePlot, 'label'):
+			annotatePlot.label.remove()
+		# Get data point from array of points X, at position index
+		if index not in labelDic:
+			x2, y2, _ = proj3d.proj_transform(X[index, 0], X[index, 1], X[index, 2], ax.get_proj())
+			labelDic[index] = (x2, y2)
+		x2, y2 = labelDic[index]
+		annotatePlot.label = plt.annotate(names[index],
+			xy = (x2, y2), xytext = (-20, 20), textcoords = 'offset points', ha = 'right', va = 'bottom',
+			bbox = dict(boxstyle = 'round,pad=0.5', fc = 'yellow', alpha = 0.5),
+			arrowprops = dict(arrowstyle = '->', connectionstyle = 'arc3,rad=0'))
+		fig.canvas.draw()
+	def onMouseMotion(event):
+		"""Event that is triggered when mouse is moved. Shows text annotation over data point closest to mouse."""
+		closestIndex = calcClosestDatapoint(X, event)
+		annotatePlot (X, closestIndex)
+	fig.canvas.mpl_connect('motion_notify_event', onMouseMotion)  # on mouse motion
 	plt.show()
 #make messages searchable
 #most similar friends in terms of words used
@@ -578,7 +705,6 @@ def topFriendsMonth(number, month, year):
 	monthStart = datetime(int(year), int(month), 1)
 	monthEnd = datetime(int(year), int(month), calendar.monthrange(int(year),int(month))[1])
 	temp = sorted(personDict.keys(), key= lambda x: -numMessagesMonth(x, monthStart, monthEnd))
-	
 	i = 0
 	topFriends = []
 	for person in temp:
@@ -639,14 +765,12 @@ def fullMessageListMonth(name, month, year):
 	messageLst = []
 	monthStart = datetime(int(year), int(month), 1)
 	monthEnd = datetime(int(year), int(month), calendar.monthrange(int(year),int(month))[1])
-	for datetime in personDict[person]:
-		if datetime >= monthStart and datetime <= monthEnd:
-			for message in personDict[datetime]:
+	for dt in personDict[name]:
+		if dt >= monthStart and dt <= monthEnd:
+			for message in personDict[name][dt]:
 				messageLst.append(message)
 	return messageLst
 			
-
-
 def fullWordList():
 	fullWordList = []
 	for messTup in fullTextDict.values():
@@ -702,18 +826,19 @@ def isProperNoun(word):
 # 	quadgram_measures = QuadgramAssocMeasures()
 # 	finder = QuadgramCollocationFinder.from_words(fullWordList())
 # 	finder.nbest(quadgram_measures.pmi, 10)  # doctest: +NORMALIZE_WHITESPACE
-def personAvgSentiment(person, month = None):
+def personAvgSentiment(person, month = None, year = None):
 	from nltk.sentiment.vader import SentimentIntensityAnalyzer
 	comp = 0
 	sid = SentimentIntensityAnalyzer()
 	if month:
-		msgLst = fullMessageListMonth()
+		msgLst = fullMessageListMonth(person, month, year)
 	else:	
 		msgLst = fullMessageList(person)
 	for message in msgLst:
 		sentimentDict = sid.polarity_scores(message)
 		comp += sentimentDict['compound']
-	return comp/len(msgLst)
+	return comp/len(msgLst) if len(msgLst) != 0 else 0
+
 
 def messageSentiment(message):
 	from nltk.sentiment.vader import SentimentIntensityAnalyzer
@@ -747,17 +872,16 @@ def combineMessageTuples(tup1, tup2):
 	return tuple(currLst1)
 
 def areEnglishCharacters(s):
-	#return True #remove when needed
 	#http://stackoverflow.com/a/27084708
 	if not s:
 		return True
 	try:
 		emoji_pattern = re.compile("["
-        u"\U0001F600-\U0001F64F"  # emoticons
-        u"\U0001F300-\U0001F5FF"  # symbols & pictographs
-        u"\U0001F680-\U0001F6FF"  # transport & map symbols
-        u"\U0001F1E0-\U0001F1FF"  # flags (iOS)
-                           "]+", flags=re.UNICODE) #http://stackoverflow.com/a/33417311
+		u"\U0001F600-\U0001F64F"  # emoticons
+		u"\U0001F300-\U0001F5FF"  # symbols & pictographs
+		u"\U0001F680-\U0001F6FF"  # transport & map symbols
+		u"\U0001F1E0-\U0001F1FF"  # flags (iOS)
+						   "]+", flags=re.UNICODE) #http://stackoverflow.com/a/33417311
 		s = emoji_pattern.sub(r'', s)
 		s.encode('ascii')
 	except UnicodeEncodeError:
@@ -767,12 +891,12 @@ def areEnglishCharacters(s):
 
 
 
-def main(username):
+def main(username, confident):
 	global me
 	me = username
-	parseFBMessages()
-	parseSMS(me)
+	parseFBMessages(confident)
+	parseSMS(me, confident)
 	#parseAllThreads()
 
 if __name__ == "__main__":
-    main(sys.argv[1])
+	main(sys.argv[1], sys.argv[2] if len(sys.argv) >=3 else False)
